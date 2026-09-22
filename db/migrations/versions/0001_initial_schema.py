@@ -32,7 +32,7 @@ def upgrade():
         sa.Column('document_type', sa.String(length=255), nullable=True),
         sa.Column('status', sa.String(length=50), nullable=False, server_default='uploaded'),
         sa.Column('uploaded_by', sa.String(length=255), nullable=True),
-        sa.Column('metadata', sa.JSON, nullable=True),
+        sa.Column('metadata_json', sa.JSON, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
         sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True),
     )

@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas.document import DocumentResponse
 from app.dependencies import get_db
+# Ensure all models are imported so relationships resolve
+import db.models  # noqa: F401
 from db.models.document import Document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
