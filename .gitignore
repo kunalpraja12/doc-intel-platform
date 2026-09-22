@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.dist/
+.build/
+logs/
+
+# Data and generated files
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.sqlite3
+uploads/
+artifacts/
