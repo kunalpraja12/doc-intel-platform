@@ -76,27 +76,66 @@ def ensure_tables():
 
 
 def seed_sample_document():
+    """Try to seed via ORM; if that fails due to schema mismatch, fall back to raw SQL.
+
+    Falling back avoids bootstrap failing when the DB hasn't had a small follow-up
+    migration applied yet (e.g., metadata_json column). The raw SQL path uses a
+    simple INSERT ... RETURNING id which works as long as the documents table
+    has the core columns (file_name, document_type, status, uploaded_by).
+    """
     session = SessionLocal()
     try:
-        # Check if a sample row already exists
-        existing = session.query(Document).filter(Document.uploaded_by == "bootstrap").first()
+        # First try: ORM path (preferred)
+        try:
+            existing = session.query(Document).filter(Document.uploaded_by == "bootstrap").first()
+        except Exception as orm_exc:
+            # Likely a schema mismatch (missing column) — fall through to raw SQL
+            print(f"ORM check failed (schema mismatch?), falling back to raw SQL: {orm_exc!r}")
+            existing = None
+
         if existing:
             print(f"Sample document already exists (id={existing.id})")
             return
 
-        doc = Document(
-            file_name="sample_invoice.pdf",
-            document_type="invoice",
-            status="uploaded",
-            uploaded_by="bootstrap",
-            metadata_json={"seed": True},
-        )
-        session.add(doc)
-        session.commit()
-        print(f"Inserted sample document with id={doc.id}")
+        # Try ORM insert if possible
+        try:
+            doc = Document(
+                file_name="sample_invoice.pdf",
+                document_type="invoice",
+                status="uploaded",
+                uploaded_by="bootstrap",
+                metadata_json={"seed": True},
+            )
+            session.add(doc)
+            session.commit()
+            print(f"Inserted sample document with id={doc.id}")
+            return
+        except Exception as orm_insert_exc:
+            session.rollback()
+            print(f"ORM insert failed, falling back to raw SQL insert: {orm_insert_exc!r}")
+
+        # Fallback: raw SQL insert using engine to avoid ORM schema expectations
+        with engine.begin() as conn:
+            # Check if a sample already exists (raw SQL)
+            row = conn.execute(text("SELECT id FROM documents WHERE uploaded_by = :u LIMIT 1"), {"u": "bootstrap"}).fetchone()
+            if row:
+                print(f"Sample document already exists (id={row[0]})")
+                return
+
+            res = conn.execute(
+                text(
+                    "INSERT INTO documents (file_name, document_type, status, uploaded_by, created_at) "
+                    "VALUES (:fn, :dt, :st, :ub, now()) RETURNING id"
+                ),
+                {"fn": "sample_invoice.pdf", "dt": "invoice", "st": "uploaded", "ub": "bootstrap"},
+            )
+            new_id = res.fetchone()[0]
+            print(f"Inserted sample document with id={new_id} (raw SQL)")
+            return
+
     except Exception as exc:
         session.rollback()
-        print(f"Failed to insert sample document: {exc}")
+        print(f"Failed to insert sample document (both ORM and raw SQL failed): {exc!r}")
         raise
     finally:
         session.close()
