@@ -3,7 +3,7 @@
 DTOs used by the documents endpoints.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -23,9 +23,26 @@ class ExtractionWord(BaseModel):
 
 class ExtractionResultResponse(BaseModel):
     text: str
-    words: List[ExtractionWord] = []
+    words: List[ExtractionWord] = Field(default_factory=list)
     confidence_score: Optional[float] = None
     model_name: Optional[str] = None
+    fields: Optional["StructuredFieldsResponse"] = None
+
+
+class StructuredLineItemResponse(BaseModel):
+    description: Optional[str] = None
+    quantity: Optional[float] = None
+    unit_price: Optional[float] = None
+    total: Optional[float] = None
+
+
+class StructuredFieldsResponse(BaseModel):
+    vendor_name: Optional[str] = None
+    document_type: Optional[str] = None
+    total_amount: Optional[float] = None
+    date: Optional[str] = None
+    invoice_or_receipt_number: Optional[str] = None
+    line_items: List[StructuredLineItemResponse] = Field(default_factory=list)
 
 
 class DocumentResponse(BaseModel):

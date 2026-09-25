@@ -13,7 +13,13 @@ from pathlib import Path
 from datetime import datetime
 import os
 
-from app.api.schemas.document import DocumentResponse, DocumentDetailResponse, ExtractionResultResponse
+from app.api.schemas.document import (
+    DocumentResponse,
+    DocumentDetailResponse,
+    ExtractionResultResponse,
+    StructuredFieldsResponse,
+    StructuredLineItemResponse,
+)
 from app.dependencies import get_db
 # Ensure all models are imported so relationships resolve
 import db.models  # noqa: F401
@@ -22,6 +28,7 @@ from db.repositories.document_repo import DocumentRepository
 
 # Import OCR extractor
 from pipeline.extract.ocr import OCRExtractor
+from pipeline.extract.field_extraction import extract_fields
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -69,11 +76,26 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         # Use preprocessing by default; the extractor will auto-upscale small images
         extracted = extractor.extract_from_path(str(dest_path), use_preprocess=True)
 
-        # Save extraction result
-        repo.add_extraction_result(db=db, document_id=doc.id, extracted_data=extracted)
+        # Persist raw OCR before calling the LLM, so the raw text is retained
+        # even when field extraction fails.
+        extraction_result = repo.add_extraction_result(
+            db=db,
+            document_id=doc.id,
+            extracted_data={"text": extracted.get("text", ""), "words": extracted.get("words", [])},
+            model_name="tesseract",
+        )
+        fields = extract_fields(extracted.get("text", ""))
+        fields_data = fields.model_dump()
+        combined_data = {
+            "text": extracted.get("text", ""),
+            "words": extracted.get("words", []),
+            "fields": fields_data,
+        }
+        repo.update_extraction_data(db=db, extraction_id=extraction_result.id, extracted_data=combined_data)
+        repo.add_line_items(db=db, document_id=doc.id, line_items=fields_data["line_items"])
         repo.update_status(db=db, document_id=doc.id, status="completed")
 
-        extraction_response = ExtractionResultResponse(text=extracted.get("text", ""), words=extracted.get("words", []))
+        extraction_response = _extraction_response(combined_data, "tesseract+gemini")
     except Exception as exc:
         # Persist failure state and return
         repo.update_status(db=db, document_id=doc.id, status="failed")
@@ -99,12 +121,10 @@ async def get_document(document_id: int, db: Session = Depends(get_db)) -> Docum
     latest = repo.get_latest_extraction(db=db, document_id=document_id)
     extraction_response = None
     if latest and latest.extracted_data:
-        data = latest.extracted_data
-        extraction_response = ExtractionResultResponse(
-            text=data.get("text", ""),
-            words=data.get("words", []),
-            confidence_score=latest.confidence_score,
-            model_name=latest.model_name,
+        extraction_response = _extraction_response(
+            latest.extracted_data,
+            latest.model_name,
+            latest.confidence_score,
         )
 
     return DocumentDetailResponse(
@@ -115,4 +135,30 @@ async def get_document(document_id: int, db: Session = Depends(get_db)) -> Docum
         content_type=doc.content_type,
         file_size=doc.file_size,
         extraction=extraction_response,
+    )
+
+
+def _extraction_response(
+    data: dict,
+    model_name: str | None,
+    confidence_score: float | None = None,
+) -> ExtractionResultResponse:
+    fields = data.get("fields")
+    structured_fields = None
+    if fields:
+        structured_fields = StructuredFieldsResponse(
+            **{
+                **fields,
+                "line_items": [
+                    StructuredLineItemResponse(**item)
+                    for item in fields.get("line_items", [])
+                ],
+            }
+        )
+    return ExtractionResultResponse(
+        text=data.get("text", ""),
+        words=data.get("words", []),
+        confidence_score=confidence_score,
+        model_name=model_name,
+        fields=structured_fields,
     )

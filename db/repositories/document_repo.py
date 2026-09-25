@@ -12,6 +12,7 @@ from sqlalchemy import select, desc
 import db.models  # noqa: F401
 from db.models.document import Document
 from db.models.extraction import ExtractionResult
+from db.models.line_item import LineItem
 
 
 class DocumentRepository:
@@ -87,3 +88,42 @@ class DocumentRepository:
         stmt = select(ExtractionResult).where(ExtractionResult.document_id == document_id).order_by(desc(ExtractionResult.created_at))
         res = db.execute(stmt).scalars().first()
         return res
+
+    def update_extraction_data(
+        self,
+        db: Session,
+        extraction_id: int,
+        extracted_data: Dict[str, Any],
+    ) -> ExtractionResult:
+        result = db.get(ExtractionResult, extraction_id)
+        if not result:
+            raise ValueError(f"Extraction result {extraction_id} not found")
+        result.extracted_data = extracted_data
+        db.add(result)
+        db.commit()
+        db.refresh(result)
+        return result
+
+    def add_line_items(
+        self,
+        db: Session,
+        document_id: int,
+        line_items: list[Dict[str, Any]],
+    ) -> list[LineItem]:
+        rows = [
+            LineItem(
+                document_id=document_id,
+                description=item.get("description"),
+                quantity=item.get("quantity"),
+                unit_price=item.get("unit_price"),
+                total=item.get("total"),
+                raw=item,
+            )
+            for item in line_items
+        ]
+        if rows:
+            db.add_all(rows)
+            db.commit()
+            for row in rows:
+                db.refresh(row)
+        return rows
