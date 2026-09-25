@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 from datetime import datetime
 import os
+import logging
 
 from app.api.schemas.document import (
     DocumentResponse,
@@ -19,6 +20,7 @@ from app.api.schemas.document import (
     ExtractionResultResponse,
     StructuredFieldsResponse,
     StructuredLineItemResponse,
+    PageExtractionResponse,
 )
 from app.dependencies import get_db
 # Ensure all models are imported so relationships resolve
@@ -36,6 +38,47 @@ UPLOAD_DIR = Path(os.environ.get("UPLOADS_DIR", "uploads")).resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 repo = DocumentRepository()
+logger = logging.getLogger(__name__)
+
+SUPPORTED_CONTENT_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "application/pdf",
+}
+SUPPORTED_CONTENT_TYPES_MESSAGE = ", ".join(sorted(SUPPORTED_CONTENT_TYPES))
+
+
+def _render_pdf_pages(pdf_bytes: bytes, output_dir: Path, file_stem: str) -> list[Path]:
+    """Render every PDF page to a PNG in one pass over the opened PDF."""
+    try:
+        import pymupdf
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF uploads require PyMuPDF. Install it with: pip install PyMuPDF"
+        ) from exc
+
+    try:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as pdf:
+            page_count = pdf.page_count
+            if page_count == 0:
+                raise ValueError("The uploaded PDF contains no pages")
+            page_paths: list[Path] = []
+            for page_number in range(page_count):
+                page = pdf.load_page(page_number)
+                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                page_path = output_dir / f"{file_stem}_page{page_number + 1}.png"
+                pixmap.save(str(page_path))
+                page_paths.append(page_path)
+            logger.info("Processed %s pages from PDF", page_count)
+            return page_paths
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Failed to convert PDF pages to images: {exc}") from exc
 
 
 @router.get("", response_model=list[DocumentResponse])
@@ -47,6 +90,15 @@ async def list_documents(db: Session = Depends(get_db)) -> list[DocumentResponse
 
 @router.post("/upload", response_model=DocumentDetailResponse)
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)) -> DocumentDetailResponse:
+    if file.content_type not in SUPPORTED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported file type '{file.content_type}'. "
+                f"Supported types: {SUPPORTED_CONTENT_TYPES_MESSAGE}"
+            ),
+        )
+
     # Save uploaded file to uploads/ with a timestamped name
     safe_name = Path(file.filename).name
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -70,29 +122,90 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         status="pending",
     )
 
-    # Run OCR synchronously (blocking). If OCR fails, mark as failed.
+    # Convert PDF pages to images, then run the same OCR pipeline used for
+    # image uploads. Non-PDF uploads retain the existing single-image path.
     try:
-        extractor = OCRExtractor()
-        # Use preprocessing by default; the extractor will auto-upscale small images
-        extracted = extractor.extract_from_path(str(dest_path), use_preprocess=True)
+        if file.content_type == "application/pdf":
+            page_paths = _render_pdf_pages(
+                contents,
+                UPLOAD_DIR,
+                f"{timestamp}_{Path(safe_name).stem}",
+            )
+            extractor = OCRExtractor()
+            page_texts: list[str] = []
+            page_words: list[dict] = []
+            for page_number, page_path in enumerate(page_paths, start=1):
+                page_result = extractor.extract_from_path(
+                    str(page_path),
+                    use_preprocess=True,
+                )
+                page_texts.append(page_result.get("text", ""))
+                page_words.extend(
+                    {**word, "page": page_number}
+                    for word in page_result.get("words", [])
+                )
+            extracted = {
+                "text": "\n\n".join(
+                    f"--- Page {page_number} ---\n\n{text}"
+                    for page_number, text in enumerate(page_texts, start=1)
+                ),
+                "words": page_words,
+            }
+            page_texts_for_extraction = page_texts
+        else:
+            extractor = OCRExtractor()
+            # Use preprocessing by default; the extractor will auto-upscale small images
+            extracted = extractor.extract_from_path(str(dest_path), use_preprocess=True)
+            page_texts_for_extraction = [extracted.get("text", "")]
 
-        # Persist raw OCR before calling the LLM, so the raw text is retained
-        # even when field extraction fails.
+        page_results = [
+                {
+                    "page_number": page_number,
+                    "text": page_text,
+                    "fields": None,
+                }
+                for page_number, page_text in enumerate(page_texts_for_extraction, start=1)
+        ]
+
+        # Persist raw OCR before field extraction updates, so raw text remains
+        # available if a per-page Gemini call fails.
+        raw_data = {
+            "page_count": len(page_results),
+            "pages": page_results,
+            "text": extracted.get("text", ""),
+            "words": extracted.get("words", []),
+        }
+
         extraction_result = repo.add_extraction_result(
             db=db,
             document_id=doc.id,
-            extracted_data={"text": extracted.get("text", ""), "words": extracted.get("words", [])},
+            extracted_data=raw_data,
             model_name="tesseract",
         )
-        fields = extract_fields(extracted.get("text", ""))
-        fields_data = fields.model_dump()
+
+        # Gemini is intentionally called once per page. This is synchronous and
+        # preserves each page's own uncertainty and line-item context.
+        for page in page_results:
+            page["fields"] = extract_fields(page["text"]).model_dump()
+
+        fields_data = page_results[0]["fields"]
         combined_data = {
+            "page_count": len(page_results),
+            "pages": page_results,
             "text": extracted.get("text", ""),
             "words": extracted.get("words", []),
             "fields": fields_data,
         }
         repo.update_extraction_data(db=db, extraction_id=extraction_result.id, extracted_data=combined_data)
-        repo.add_line_items(db=db, document_id=doc.id, line_items=fields_data["line_items"])
+        repo.add_line_items(
+            db=db,
+            document_id=doc.id,
+            line_items=[
+                item
+                for page in page_results
+                for item in page["fields"].get("line_items", [])
+            ],
+        )
         repo.update_status(db=db, document_id=doc.id, status="completed")
 
         extraction_response = _extraction_response(combined_data, "tesseract+gemini")
@@ -108,6 +221,8 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         file_path=doc.file_path,
         content_type=doc.content_type,
         file_size=doc.file_size,
+        page_count=combined_data["page_count"],
+        pages=_pages_response(combined_data.get("pages", [])),
         extraction=extraction_response,
     )
 
@@ -134,6 +249,8 @@ async def get_document(document_id: int, db: Session = Depends(get_db)) -> Docum
         file_path=doc.file_path,
         content_type=doc.content_type,
         file_size=doc.file_size,
+        page_count=latest.extracted_data.get("page_count", 1) if latest and latest.extracted_data else 1,
+        pages=_pages_response(latest.extracted_data.get("pages", []) if latest and latest.extracted_data else []),
         extraction=extraction_response,
     )
 
@@ -162,3 +279,22 @@ def _extraction_response(
         model_name=model_name,
         fields=structured_fields,
     )
+
+
+def _pages_response(pages: list[dict]) -> list[PageExtractionResponse]:
+    return [
+        PageExtractionResponse(
+            page_number=page["page_number"],
+            text=page.get("text", ""),
+            fields=StructuredFieldsResponse(
+                **{
+                    **page["fields"],
+                    "line_items": [
+                        StructuredLineItemResponse(**item)
+                        for item in page["fields"].get("line_items", [])
+                    ],
+                }
+            ) if page.get("fields") is not None else None,
+        )
+        for page in pages
+    ]

@@ -14,6 +14,7 @@ class DocumentUploadRequest(BaseModel):
 
 class ExtractionWord(BaseModel):
     text: str
+    page: Optional[int] = None
     left: int
     top: int
     width: int
@@ -45,6 +46,12 @@ class StructuredFieldsResponse(BaseModel):
     line_items: List[StructuredLineItemResponse] = Field(default_factory=list)
 
 
+class PageExtractionResponse(BaseModel):
+    page_number: int
+    text: str
+    fields: Optional[StructuredFieldsResponse] = None
+
+
 class DocumentResponse(BaseModel):
     id: str
     file_name: str
@@ -55,4 +62,6 @@ class DocumentDetailResponse(DocumentResponse):
     file_path: Optional[str] = None
     content_type: Optional[str] = None
     file_size: Optional[int] = None
+    page_count: int = 1
+    pages: List[PageExtractionResponse] = Field(default_factory=list)
     extraction: Optional[ExtractionResultResponse] = None
