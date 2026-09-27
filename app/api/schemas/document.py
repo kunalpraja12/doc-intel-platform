@@ -59,6 +59,21 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentDetailResponse(DocumentResponse):
+    duplicate: bool = False
+    file_path: Optional[str] = None
+    content_type: Optional[str] = None
+    file_size: Optional[int] = None
+    page_count: int = 1
+    pages: List[PageExtractionResponse] = Field(default_factory=list)
+    extraction: Optional[ExtractionResultResponse] = None
+
+
+class UploadFileResult(BaseModel):
+    file_name: str
+    status: str
+    duplicate: bool = False
+    error: Optional[str] = None
+    id: Optional[str] = None
     file_path: Optional[str] = None
     content_type: Optional[str] = None
     file_size: Optional[int] = None

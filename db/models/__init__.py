@@ -14,6 +14,7 @@ from db.models.line_item import LineItem  # noqa: F401
 from db.models.anomaly_flag import AnomalyFlag  # noqa: F401
 from db.models.user import User  # noqa: F401
 from db.models.audit import AuditLog  # noqa: F401
+from db.models.embedding import DocumentEmbedding  # noqa: F401
 
 __all__ = [
     "Document",
@@ -22,4 +23,5 @@ __all__ = [
     "AnomalyFlag",
     "User",
     "AuditLog",
+    "DocumentEmbedding",
 ]

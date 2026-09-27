@@ -10,6 +10,7 @@ On Windows, ensure tesseract.exe is on PATH or set pytesseract.pytesseract.tesse
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List
 
 # Ensure project root is on sys.path so imports like 'pipeline' resolve when
@@ -136,6 +137,10 @@ class OCRExtractor:
 
         # Use pytesseract to get plain text
         raw_text = pytesseract.image_to_string(rgb)
+        rotated_text = self._extract_rotated_text(rgb)
+        additional_text = self._get_new_rotated_text(raw_text, rotated_text)
+        if additional_text:
+            raw_text = f"{raw_text.rstrip()}\n[additional rotated-text pass]: {additional_text}"
 
         # Use the TSV output to obtain word-level boxes and confidences
         data = pytesseract.image_to_data(rgb, output_type=Output.DICT)
@@ -160,6 +165,47 @@ class OCRExtractor:
             words.append(word)
 
         return {"text": raw_text, "words": words}
+
+    @staticmethod
+    def _get_new_rotated_text(main_text: str, rotated_text: str) -> str:
+        main_words = set(re.findall(r"[a-z0-9]+", main_text.casefold()))
+        additional_lines: list[str] = []
+        seen_words = set(main_words)
+        for line in rotated_text.splitlines():
+            new_words = []
+            for word in re.findall(r"[a-z0-9]+", line, flags=re.IGNORECASE):
+                normalized = word.casefold()
+                if len(normalized) > 1 and normalized not in seen_words:
+                    seen_words.add(normalized)
+                    new_words.append(word)
+            if new_words:
+                additional_lines.append(" ".join(new_words))
+        return "\n".join(additional_lines)
+
+    @staticmethod
+    def _rotate_image(image):
+        """Rotate an image -45 degrees, expanding the canvas to avoid clipping."""
+        height, width = image.shape[:2]
+        center = (width / 2, height / 2)
+        matrix = cv2.getRotationMatrix2D(center, -45, 1.0)
+        abs_cos = abs(matrix[0, 0])
+        abs_sin = abs(matrix[0, 1])
+        new_width = int(height * abs_sin + width * abs_cos)
+        new_height = int(height * abs_cos + width * abs_sin)
+        matrix[0, 2] += new_width / 2 - center[0]
+        matrix[1, 2] += new_height / 2 - center[1]
+        return cv2.warpAffine(
+            image,
+            matrix,
+            (new_width, new_height),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(255, 255, 255),
+        )
+
+    def _extract_rotated_text(self, rgb_image) -> str:
+        rotated_image = self._rotate_image(rgb_image)
+        return pytesseract.image_to_string(rotated_image)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ import db.models  # noqa: F401
 from db.models.document import Document
 from db.models.extraction import ExtractionResult
 from db.models.line_item import LineItem
+from db.models.embedding import DocumentEmbedding
 
 
 class DocumentRepository:
@@ -31,6 +32,7 @@ class DocumentRepository:
         document_type: Optional[str] = None,
         uploaded_by: Optional[str] = None,
         status: str = "pending",
+        content_hash: Optional[str] = None,
     ) -> Document:
         doc = Document(
             file_name=file_name,
@@ -40,11 +42,23 @@ class DocumentRepository:
             document_type=document_type,
             uploaded_by=uploaded_by,
             status=status,
+            content_hash=content_hash,
         )
         db.add(doc)
         db.commit()
         db.refresh(doc)
         return doc
+
+    def get_document_by_content_hash(
+        self,
+        db: Session,
+        content_hash: str,
+    ) -> Optional[Document]:
+        return (
+            db.query(Document)
+            .filter(Document.content_hash == content_hash)
+            .first()
+        )
 
     def update_status(self, db: Session, document_id: int, status: str) -> None:
         doc = db.get(Document, document_id)
@@ -127,3 +141,56 @@ class DocumentRepository:
             for row in rows:
                 db.refresh(row)
         return rows
+
+    def add_embedding(
+        self,
+        db: Session,
+        document_id: int,
+        page_number: Optional[int],
+        embedding: list[float],
+        chunk_text: str,
+    ) -> DocumentEmbedding:
+        row = DocumentEmbedding(
+            document_id=document_id,
+            page_number=page_number,
+            embedding=embedding,
+            chunk_text=chunk_text,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    def delete_embeddings(self, db: Session, document_id: int) -> None:
+        db.query(DocumentEmbedding).filter(
+            DocumentEmbedding.document_id == document_id
+        ).delete(synchronize_session=False)
+        db.commit()
+
+    def search_embeddings(
+        self,
+        db: Session,
+        query_embedding: list[float],
+        limit: int = 5,
+    ) -> list[tuple[DocumentEmbedding, float]]:
+        candidate_limit = max(limit * 4, 20)
+        per_document_limit = 2
+        distance = DocumentEmbedding.embedding.cosine_distance(query_embedding)
+        candidates = (
+            db.query(DocumentEmbedding, distance.label("distance"))
+            .order_by(distance)
+            .limit(candidate_limit)
+            .all()
+        )
+
+        selected: list[tuple[DocumentEmbedding, float]] = []
+        document_counts: dict[int, int] = {}
+        for embedding, distance_value in candidates:
+            count = document_counts.get(embedding.document_id, 0)
+            if count >= per_document_limit:
+                continue
+            selected.append((embedding, float(distance_value)))
+            document_counts[embedding.document_id] = count + 1
+
+        selected.sort(key=lambda item: item[1])
+        return selected[:limit]

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <title>Document Intelligence Platform</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #192335;
+      --muted: #6c7789;
+      --line: #e4e9f0;
+      --surface: #fff;
+      --canvas: #f5f7fb;
+      --accent: #375fe8;
+      --accent-dark: #294bc4;
+      --success: #16794a;
+      --danger: #b42318;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); }
+    button, input { font: inherit; }
+    .sidebar {
+      position: fixed; inset: 0 auto 0 0; width: 280px; padding: 32px 24px;
+      background: #fff; border-right: 1px solid var(--line); overflow-y: auto;
+    }
+    .brand-mark {
+      width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px;
+      background: #edf1ff; color: var(--accent); font-size: 21px; font-weight: 800;
+    }
+    .sidebar h1 { font-size: 20px; line-height: 1.3; margin: 16px 0 12px; letter-spacing: -.3px; }
+    .sidebar p, .sidebar li { color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .sidebar h2 { margin: 28px 0 8px; font-size: 11px; color: #566176; text-transform: uppercase; letter-spacing: .1em; }
+    .sidebar ol { padding-left: 19px; margin: 0; }
+    .sidebar li { padding-left: 3px; margin: 5px 0; }
+    .file-types { padding: 12px; margin-top: 9px; border-radius: 10px; background: #f5f7fb; color: #536078; font-size: 12px; line-height: 1.7; }
+    .main { margin-left: 280px; max-width: 1180px; padding: 34px 42px 60px; }
+    .page-heading { margin-bottom: 26px; }
+    .page-heading h2 { font-size: 25px; letter-spacing: -.6px; margin: 0 0 6px; }
+    .page-heading p { color: var(--muted); margin: 0; font-size: 14px; }
+    .columns { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(310px, .9fr); gap: 22px; align-items: start; }
+    .stack { display: grid; gap: 22px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: 0 3px 12px rgba(31, 48, 79, .035); }
+    .card-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 17px; }
+    .section-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: #edf1ff; color: var(--accent); font-size: 12px; font-weight: 700; }
+    .card-heading h3 { margin: 0; font-size: 16px; }
+    .subtle { font-size: 13px; color: var(--muted); line-height: 1.55; }
+    .upload-zone { border: 1px dashed #c8d1df; background: #fafbfe; border-radius: 11px; padding: 23px 18px; text-align: center; }
+    .upload-zone input { display: block; width: 100%; color: var(--muted); font-size: 13px; }
+    .upload-zone .subtle { margin: 11px 0 0; }
+    .actions { display: flex; gap: 10px; margin-top: 15px; align-items: center; }
+    .button { border: 0; border-radius: 9px; padding: 10px 15px; font-weight: 650; font-size: 13px; cursor: pointer; }
+    .button.primary { color: #fff; background: var(--accent); }
+    .button.primary:hover { background: var(--accent-dark); }
+    .button.secondary { color: #33415b; background: #edf1f7; }
+    .button:disabled { opacity: .55; cursor: not-allowed; }
+    .status { min-height: 20px; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--success); }
+    .result-card { margin-top: 17px; border: 1px solid var(--line); border-radius: 11px; padding: 16px; }
+    .result-card h4 { margin: 0 0 12px; font-size: 14px; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+    .field-label { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+    .field-value { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+    .line-items { border-collapse: collapse; width: 100%; margin-top: 15px; font-size: 12px; }
+    .line-items th, .line-items td { border-top: 1px solid var(--line); padding: 8px 5px; text-align: left; }
+    .line-items th { color: var(--muted); font-weight: 600; }
+    .line-items td:last-child, .line-items th:last-child { text-align: right; }
+    .chat-form { display: flex; gap: 9px; }
+    .chat-form input { min-width: 0; flex: 1; border: 1px solid #d8deea; border-radius: 9px; padding: 10px 12px; outline: none; font-size: 13px; }
+    .chat-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(55, 95, 232, .11); }
+    .chat-answer { margin-top: 16px; padding: 14px; border-radius: 12px 12px 12px 3px; background: #edf1ff; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+    .sources { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .source-chip { display: inline-block; margin: 6px 5px 0 0; padding: 5px 8px; background: #f2f4f8; border-radius: 20px; color: #46536a; }
+    .empty { color: var(--muted); font-size: 13px; padding: 5px 0; }
+    .loader { display: inline-block; width: 13px; height: 13px; border: 2px solid #d5ddf5; border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; vertical-align: -2px; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 900px) {
+      .sidebar { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 22px 24px; }
+      .sidebar h2 { margin-top: 18px; }
+      .main { margin-left: 0; padding: 26px 22px 45px; }
+      .columns { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 500px) {
+      .main { padding-inline: 14px; }
+      .card { padding: 17px; }
+      .field-grid { grid-template-columns: 1fr; }
+      .chat-form { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand-mark" aria-hidden="true">D</div>
+    <h1>Document Intelligence Platform</h1>
+    <p>Extract structured data such as vendors, amounts, dates, and line items from invoices and receipts with OCR and AI. Then ask questions across your uploaded documents.</p>
+    <h2>How to use</h2>
+    <ol>
+      <li>Upload one or more documents at once, or a ZIP of documents.</li>
+      <li>Wait while OCR and AI process each file.</li>
+      <li>Ask questions across your whole document collection in chat.</li>
+    </ol>
+    <h2>Supported files</h2>
+    <div class="file-types">PNG · JPG · WEBP · BMP · TIFF · PDF · ZIP bundles</div>
+  </aside>
+
+  <main class="main">
+    <header class="page-heading">
+      <h2>Your documents, understood.</h2>
+      <p>Upload invoices and receipts, review extracted information, and get answers from your files.</p>
+    </header>
+    <div class="columns">
+      <div class="stack">
+        <section class="card" aria-labelledby="upload-title">
+          <div class="card-heading"><span class="section-number">01</span><h3 id="upload-title">Upload documents</h3></div>
+          <form id="upload-form">
+            <div class="upload-zone">
+              <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.pdf,.zip,image/png,image/jpeg,image/webp,image/bmp,image/tiff,application/pdf,application/zip">
+              <p class="subtle">You can upload multiple files, or a single .zip file containing many documents. Max 20MB per file.</p>
+            </div>
+            <div class="actions"><button id="upload-button" class="button primary" type="submit">Upload and process</button></div>
+            <p class="subtle">Processing takes 15–30 seconds per file. Large batches will take a while — please keep this tab open.</p>
+            <p id="selection-warning" class="status" role="status"></p>
+            <p id="upload-status" class="status" role="status"></p>
+          </form>
+          <div id="upload-result"></div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="chat-title">
+        <div class="card-heading"><span class="section-number">02</span><h3 id="chat-title">Ask your documents</h3></div>
+        <p class="subtle">Ask a question about details across the documents you’ve uploaded.</p>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-question" type="text" placeholder="e.g. What was the total on my last receipt?" required>
+          <button id="ask-button" class="button primary" type="submit">Ask</button>
+        </form>
+        <p id="chat-status" class="status" role="status"></p>
+        <div id="chat-result" aria-live="polite"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function showStatus(target, message, kind = "") {
+      target.className = `status ${kind}`.trim();
+      target.textContent = message;
+    }
+
+    function formatAmount(amount) {
+      if (amount === null || amount === undefined || amount === "") return "Not identified";
+      return typeof amount === "number" ? amount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(amount);
+    }
+
+    function renderFields(container, fields, heading = "Extracted details") {
+      container.replaceChildren();
+      const card = element("div", "result-card");
+      card.append(element("h4", "", heading));
+      const grid = element("div", "field-grid");
+      const values = [
+        ["Vendor", fields?.vendor_name],
+        ["Document type", fields?.document_type],
+        ["Total amount", fields?.total_amount === null || fields?.total_amount === undefined ? null : formatAmount(fields.total_amount)],
+        ["Date", fields?.date],
+        ["Invoice / receipt number", fields?.invoice_or_receipt_number],
+      ];
+      for (const [label, value] of values) {
+        const item = element("div");
+        item.append(element("div", "field-label", label));
+        item.append(element("div", "field-value", value || "Not identified"));
+        grid.append(item);
+      }
+      card.append(grid);
+
+      const items = Array.isArray(fields?.line_items) ? fields.line_items : [];
+      if (items.length) {
+        const table = element("table", "line-items");
+        const thead = element("thead");
+        const headerRow = element("tr");
+        for (const title of ["Item", "Qty", "Unit price", "Total"]) headerRow.append(element("th", "", title));
+        thead.append(headerRow);
+        table.append(thead);
+        const tbody = element("tbody");
+        for (const line of items) {
+          const row = element("tr");
+          row.append(element("td", "", line.description || "—"));
+          row.append(element("td", "", line.quantity ?? "—"));
+          row.append(element("td", "", line.unit_price == null ? "—" : formatAmount(line.unit_price)));
+          row.append(element("td", "", line.total == null ? "—" : formatAmount(line.total)));
+          tbody.append(row);
+        }
+        table.append(tbody);
+        card.append(table);
+      } else {
+        card.append(element("p", "subtle", "No line items were identified."));
+      }
+      container.append(card);
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
+      return body;
+    }
+
+    function renderUploadResult(container, item) {
+      if (item.error) {
+        const itemCard = element("div", "result-card");
+        itemCard.append(element("h4", "", item.file_name));
+        itemCard.append(element("p", `status ${item.status === "skipped" ? "" : "error"}`.trim(), item.error));
+        container.append(itemCard);
+        return;
+      }
+      const itemCard = element("div");
+      const title = item.duplicate
+        ? `${item.file_name} · already uploaded`
+        : `${item.file_name} · ${item.status}`;
+      renderFields(itemCard, item.extraction?.fields || item.pages?.[0]?.fields || {}, title);
+      container.append(itemCard);
+    }
+
+    byId("file-input").addEventListener("change", (event) => {
+      const warning = byId("selection-warning");
+      const count = event.target.files.length;
+      if (count > 10) {
+        showStatus(warning, "For best results, upload 10 or fewer files at a time", "error");
+      } else {
+        showStatus(warning, "");
+      }
+    });
+
+    byId("upload-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const files = Array.from(byId("file-input").files);
+      if (!files.length) return;
+      if (files.length > 10) {
+        showStatus(byId("selection-warning"), "For best results, upload 10 or fewer files at a time", "error");
+        return;
+      }
+      const button = byId("upload-button");
+      const status = byId("upload-status");
+      const result = byId("upload-result");
+      button.disabled = true;
+      button.innerHTML = '<span class="loader" aria-hidden="true"></span>Processing…';
+      result.replaceChildren();
+      let processed = 0;
+      let duplicates = 0;
+      let skipped = 0;
+      let failed = 0;
+      try {
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          showStatus(status, `Processing file ${index + 1} of ${files.length}: ${file.name}…`);
+          const formData = new FormData();
+          formData.append("files", file);
+          try {
+            const response = await fetchJson("/documents/upload", {
+              method: "POST",
+              body: formData,
+            });
+            const items = Array.isArray(response) ? response : [response];
+            for (const item of items) {
+              renderUploadResult(result, item);
+              if (item.duplicate) duplicates += 1;
+              else if (item.status === "completed") processed += 1;
+              else if (item.status === "skipped") skipped += 1;
+              else failed += 1;
+            }
+          } catch (error) {
+            failed += 1;
+            renderUploadResult(result, {
+              file_name: file.name,
+              status: "failed",
+              error: error.message,
+            });
+          }
+        }
+        const hasIssues = skipped > 0 || failed > 0;
+        showStatus(
+          status,
+          `Finished: ${processed} processed, ${duplicates} duplicate${duplicates === 1 ? "" : "s"}, ${skipped} skipped, ${failed} failed.`,
+          hasIssues ? "" : "success",
+        );
+      } finally {
+        button.disabled = false;
+        button.textContent = "Upload and process";
+      }
+    });
+
+    byId("chat-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = byId("chat-question");
+      const question = input.value.trim();
+      if (!question) return;
+      const button = byId("ask-button");
+      const status = byId("chat-status");
+      const result = byId("chat-result");
+      button.disabled = true;
+      showStatus(status, "Searching your documents…");
+      result.replaceChildren();
+      try {
+        const answer = await fetchJson("/chat/query", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: question,
+        });
+        showStatus(status, "");
+        result.append(element("div", "chat-answer", answer.answer));
+        const sourceArea = element("div", "sources", answer.sources?.length ? "Sources used:" : "No document sources were returned.");
+        for (const source of answer.sources || []) {
+          const label = `${source.file_name}${source.page_number ? ` · page ${source.page_number}` : ""}`;
+          sourceArea.append(element("span", "source-chip", label));
+        }
+        result.append(sourceArea);
+      } catch (error) {
+        showStatus(status, error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+  </script>
+</body>
+</html>

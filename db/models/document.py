@@ -16,6 +16,7 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True)
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=True)
+    content_hash = Column(String(64), nullable=True, unique=True, index=True)
     content_type = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)
     document_type = Column(String, nullable=True)

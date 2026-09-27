@@ -1,15 +1,22 @@
-"""Schemas for chat prompts and responses.
+"""Schemas for single-turn document retrieval chat."""
 
-TODO: Define request/response DTOs for retrieval-augmented Q&A.
-"""
-
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
-class ChatRequest(BaseModel):
-    question: str
+class ChatQueryRequest(BaseModel):
+    question: str = Field(..., min_length=1)
 
 
-class ChatResponse(BaseModel):
+class ChatSource(BaseModel):
+    document_id: str
+    file_name: str
+    page_number: int | None = None
+
+
+class ChatQueryResponse(BaseModel):
     answer: str
-    sources: list[str] = []
+    sources: list[ChatSource] = Field(default_factory=list)
+
+
+ChatRequest = ChatQueryRequest
+ChatResponse = ChatQueryResponse
