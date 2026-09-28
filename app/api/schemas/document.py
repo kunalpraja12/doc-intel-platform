@@ -33,12 +33,22 @@ class ExtractionResultResponse(BaseModel):
 class StructuredLineItemResponse(BaseModel):
     description: Optional[str] = None
     quantity: Optional[float] = None
+    cases: Optional[float] = None
+    pieces: Optional[float] = None
+    units_per_case: Optional[float] = None
+    base_rate: Optional[float] = None
     unit_price: Optional[float] = None
+    discount: Optional[float] = None
+    taxable_amount: Optional[float] = None
+    net_amount: Optional[float] = None
     total: Optional[float] = None
+    needs_review: bool = False
 
 
 class StructuredFieldsResponse(BaseModel):
     vendor_name: Optional[str] = None
+    seller_gstin: Optional[str] = None
+    buyer_gstin: Optional[str] = None
     document_type: Optional[str] = None
     total_amount: Optional[float] = None
     date: Optional[str] = None
@@ -60,6 +70,7 @@ class DocumentResponse(BaseModel):
 
 class DocumentDetailResponse(DocumentResponse):
     duplicate: bool = False
+    needs_review: bool = False
     file_path: Optional[str] = None
     content_type: Optional[str] = None
     file_size: Optional[int] = None
@@ -72,7 +83,8 @@ class UploadFileResult(BaseModel):
     file_name: str
     status: str
     duplicate: bool = False
-    error: Optional[str] = None
+    needs_review: bool = False
+    message: Optional[str] = None
     id: Optional[str] = None
     file_path: Optional[str] = None
     content_type: Optional[str] = None

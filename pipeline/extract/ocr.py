@@ -100,6 +100,9 @@ class OCRExtractor:
         if img is None:
             raise FileNotFoundError(f"Image not found or cannot be read: {path}")
 
+        self._ensure_available()
+        img = self._correct_orientation(img)
+
         # Upscale if requested or auto-triggered
         try:
             img = self._maybe_upscale(img, upscale)
@@ -116,20 +119,25 @@ class OCRExtractor:
                 # If preprocessing fails, warn and continue with raw image
                 print(f"Warning: preprocessing failed or not available: {exc}")
 
-        return self.extract_from_image(img)
+        return self._extract_oriented_image(img)
 
     def extract_from_image(self, image, upscale: int | None = None) -> Dict[str, Any]:
-        """Run pytesseract on an OpenCV BGR image.
-
-        Returns:
-          { 'text': str, 'words': [ {text, left, top, width, height, conf} ] }
-        """
-        # apply upscale to in-memory image as well
+        """Correct page orientation, then run OCR on an OpenCV BGR image."""
+        self._ensure_available()
+        image = self._correct_orientation(image)
         if upscale:
             try:
                 image = self._maybe_upscale(image, upscale)
             except Exception as exc:
                 print(f"Warning: upscale failed: {exc}")
+        return self._extract_oriented_image(image)
+
+    def _extract_oriented_image(self, image) -> Dict[str, Any]:
+        """Run pytesseract on an OpenCV BGR image.
+
+        Returns:
+          { 'text': str, 'words': [ {text, left, top, width, height, conf} ] }
+        """
         self._ensure_available()
 
         # Convert BGR to RGB for pytesseract
@@ -165,6 +173,34 @@ class OCRExtractor:
             words.append(word)
 
         return {"text": raw_text, "words": words}
+
+    def _correct_orientation(self, image):
+        """Use Tesseract OSD to correct page orientation before OCR."""
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        try:
+            osd = pytesseract.image_to_osd(rgb)
+        except pytesseract.TesseractError as exc:
+            print(f"Warning: orientation detection failed; using original orientation: {exc}")
+            return image
+
+        match = re.search(r"^\s*Rotate:\s*(\d+)\s*$", osd, flags=re.MULTILINE)
+        if match is None:
+            print("Warning: orientation detection returned no rotation; using original orientation")
+            return image
+
+        correction = int(match.group(1)) % 360
+        rotations = {
+            90: cv2.ROTATE_90_CLOCKWISE,
+            180: cv2.ROTATE_180,
+            270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+        }
+        if correction == 0:
+            return image
+        if correction not in rotations:
+            print(f"Warning: unsupported OSD rotation {correction}; using original orientation")
+            return image
+        print(f"Correcting page orientation by {correction} degrees using Tesseract OSD")
+        return cv2.rotate(image, rotations[correction])
 
     @staticmethod
     def _get_new_rotated_text(main_text: str, rotated_text: str) -> str:

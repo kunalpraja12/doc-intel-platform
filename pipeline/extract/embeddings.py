@@ -9,6 +9,8 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
+from app.core.errors import invoke_gemini_with_retries
+
 load_dotenv()
 
 EMBEDDING_MODEL = "gemini-embedding-001"
@@ -28,9 +30,12 @@ def _get_embeddings() -> GoogleGenerativeAIEmbeddings:
 
 def embed_text(text: str) -> list[float]:
     """Embed one chunk or question using the configured Gemini model."""
-    return _get_embeddings().embed_query(
-        text,
-        output_dimensionality=EMBEDDING_DIMENSION,
+    return invoke_gemini_with_retries(
+        lambda: _get_embeddings().embed_query(
+            text,
+            output_dimensionality=EMBEDDING_DIMENSION,
+        ),
+        operation="text embedding",
     )
 
 

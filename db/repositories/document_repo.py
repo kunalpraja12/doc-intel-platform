@@ -3,17 +3,30 @@
 Provides small helper methods used by the API routes to create documents,
 persist extraction results, and query document+extraction state.
 """
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 from typing import Optional, Dict, Any
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc
+from sqlalchemy import desc, func, select
 
 import db.models  # noqa: F401
 from db.models.document import Document
 from db.models.extraction import ExtractionResult
 from db.models.line_item import LineItem
 from db.models.embedding import DocumentEmbedding
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    normalized = re.sub(r"[^0-9.+-]", "", str(value).replace(",", ""))
+    try:
+        return float(normalized) if normalized else None
+    except ValueError:
+        return None
 
 
 class DocumentRepository:
@@ -59,6 +72,60 @@ class DocumentRepository:
             .filter(Document.content_hash == content_hash)
             .first()
         )
+
+    def persist_processed_upload(
+        self,
+        db: Session,
+        *,
+        file_name: str,
+        file_path: str,
+        content_type: str,
+        file_size: int,
+        content_hash: str,
+        extracted_data: Dict[str, Any],
+        embeddings: list[Dict[str, Any]],
+        line_items: list[Dict[str, Any]],
+    ) -> tuple[Document, ExtractionResult]:
+        """Stage all already-computed upload data in the caller's transaction."""
+        document = Document(
+            file_name=file_name,
+            file_path=file_path,
+            content_type=content_type,
+            file_size=file_size,
+            content_hash=content_hash,
+            status="completed",
+            processed_at=datetime.now(timezone.utc),
+        )
+        extraction = ExtractionResult(
+            document=document,
+            extracted_data=extracted_data,
+            model_name="tesseract+gemini",
+        )
+        db.add_all([document, extraction])
+        db.flush()
+
+        db.add_all([
+            LineItem(
+                document_id=document.id,
+                description=item.get("description"),
+                quantity=item.get("quantity"),
+                unit_price=item.get("unit_price"),
+                total=item.get("total"),
+                raw=item,
+            )
+            for item in line_items
+        ])
+        db.add_all([
+            DocumentEmbedding(
+                document_id=document.id,
+                page_number=item["page_number"],
+                embedding=item["embedding"],
+                chunk_text=item["chunk_text"],
+            )
+            for item in embeddings
+        ])
+        db.flush()
+        return document, extraction
 
     def update_status(self, db: Session, document_id: int, status: str) -> None:
         doc = db.get(Document, document_id)
@@ -172,16 +239,18 @@ class DocumentRepository:
         db: Session,
         query_embedding: list[float],
         limit: int = 5,
+        document_ids: list[int] | None = None,
     ) -> list[tuple[DocumentEmbedding, float]]:
+        if document_ids is not None and not document_ids:
+            return []
+
         candidate_limit = max(limit * 4, 20)
         per_document_limit = 2
         distance = DocumentEmbedding.embedding.cosine_distance(query_embedding)
-        candidates = (
-            db.query(DocumentEmbedding, distance.label("distance"))
-            .order_by(distance)
-            .limit(candidate_limit)
-            .all()
-        )
+        query = db.query(DocumentEmbedding, distance.label("distance"))
+        if document_ids is not None:
+            query = query.filter(DocumentEmbedding.document_id.in_(document_ids))
+        candidates = query.order_by(distance).limit(candidate_limit).all()
 
         selected: list[tuple[DocumentEmbedding, float]] = []
         document_counts: dict[int, int] = {}
@@ -194,3 +263,158 @@ class DocumentRepository:
 
         selected.sort(key=lambda item: item[1])
         return selected[:limit]
+
+    def get_structured_chat_overview(
+        self,
+        db: Session,
+        document_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Return compact document summaries and SQL aggregates without line-item rows."""
+        if document_ids is not None and not document_ids:
+            return {
+                "document_count": 0,
+                "invoice_count": 0,
+                "receipt_count": 0,
+                "line_item_count": 0,
+                "quantity_total": 0.0,
+                "line_net_total": 0.0,
+                "document_total": 0.0,
+                "documents": [],
+            }
+
+        latest_extractions = (
+            db.query(
+                ExtractionResult.document_id.label("document_id"),
+                func.max(ExtractionResult.id).label("latest_id"),
+            )
+            .group_by(ExtractionResult.document_id)
+            .subquery()
+        )
+        vendor_name = ExtractionResult.extracted_data["fields"]["vendor_name"].as_string()
+        invoice_number = ExtractionResult.extracted_data["fields"][
+            "invoice_or_receipt_number"
+        ].as_string()
+        extracted_type = ExtractionResult.extracted_data["fields"][
+            "document_type"
+        ].as_string()
+        total_amount = ExtractionResult.extracted_data["fields"][
+            "total_amount"
+        ].as_string()
+        document_query = (
+            db.query(
+                Document.id,
+                Document.file_name,
+                Document.document_type,
+                vendor_name.label("vendor_name"),
+                invoice_number.label("invoice_number"),
+                extracted_type.label("extracted_type"),
+                total_amount.label("total_amount"),
+            )
+            .outerjoin(
+                latest_extractions,
+                latest_extractions.c.document_id == Document.id,
+            )
+            .outerjoin(
+                ExtractionResult,
+                ExtractionResult.id == latest_extractions.c.latest_id,
+            )
+            .order_by(Document.id)
+        )
+        if document_ids is not None:
+            document_query = document_query.filter(Document.id.in_(document_ids))
+
+        document_rows = document_query.all()
+        line_stats_query = (
+            db.query(
+                func.count(LineItem.id),
+                func.count(LineItem.quantity),
+                func.sum(LineItem.quantity),
+                func.count(LineItem.total),
+                func.sum(LineItem.total),
+            )
+            .join(Document, Document.id == LineItem.document_id)
+        )
+        if document_ids is not None:
+            line_stats_query = line_stats_query.filter(
+                LineItem.document_id.in_(document_ids)
+            )
+        (
+            line_item_count,
+            quantity_count,
+            quantity_total,
+            net_amount_count,
+            line_net_total,
+        ) = line_stats_query.one()
+
+        documents: list[dict[str, Any]] = []
+        invoice_count = 0
+        receipt_count = 0
+        document_total = 0.0
+        document_total_count = 0
+        for row in document_rows:
+            document_type = row.document_type or row.extracted_type
+            normalized_type = (document_type or "").casefold()
+            invoice_count += normalized_type == "invoice"
+            receipt_count += normalized_type == "receipt"
+            parsed_total = _optional_float(row.total_amount)
+            if parsed_total is not None:
+                document_total += parsed_total
+                document_total_count += 1
+            documents.append(
+                {
+                    "document_id": row.id,
+                    "file_name": row.file_name,
+                    "vendor_name": row.vendor_name,
+                    "invoice_number": row.invoice_number,
+                    "document_type": document_type,
+                    "total_amount": parsed_total,
+                }
+            )
+
+        return {
+            "document_count": len(document_rows),
+            "invoice_count": invoice_count,
+            "receipt_count": receipt_count,
+            "line_item_count": int(line_item_count or 0),
+            "quantity_total": (
+                float(quantity_total) if quantity_count else None
+            ),
+            "line_net_total": (
+                float(line_net_total) if net_amount_count else None
+            ),
+            "document_total": document_total if document_total_count else None,
+            "documents": documents,
+        }
+
+    def get_line_items_for_documents(
+        self,
+        db: Session,
+        document_ids: list[int],
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Load a bounded line-item sample for a limited document subset."""
+        if not document_ids or limit <= 0:
+            return []
+        rows = (
+            db.query(
+                LineItem.document_id,
+                LineItem.description,
+                LineItem.quantity,
+                LineItem.unit_price,
+                LineItem.total,
+            )
+            .filter(LineItem.document_id.in_(document_ids))
+            .order_by(LineItem.document_id, LineItem.id)
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "document_id": row.document_id,
+                "description": row.description,
+                "quantity": row.quantity,
+                "unit_price": row.unit_price,
+                "net_amount": row.total,
+            }
+            for row in rows
+        ]

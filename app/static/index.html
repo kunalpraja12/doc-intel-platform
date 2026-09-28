@@ -68,6 +68,10 @@
     .line-items th, .line-items td { border-top: 1px solid var(--line); padding: 8px 5px; text-align: left; }
     .line-items th { color: var(--muted); font-weight: 600; }
     .line-items td:last-child, .line-items th:last-child { text-align: right; }
+    .review-badge { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 5px; background: #fff3cd; color: #8a5b00; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .chat-scope { display: flex; gap: 15px; margin: 13px 0; padding: 0; border: 0; color: #536078; font-size: 12px; }
+    .chat-scope legend { margin-bottom: 7px; color: var(--muted); }
+    .chat-scope label { display: flex; align-items: center; gap: 5px; }
     .chat-form { display: flex; gap: 9px; }
     .chat-form input { min-width: 0; flex: 1; border: 1px solid #d8deea; border-radius: 9px; padding: 10px 12px; outline: none; font-size: 13px; }
     .chat-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(55, 95, 232, .11); }
@@ -98,12 +102,12 @@
     <p>Extract structured data such as vendors, amounts, dates, and line items from invoices and receipts with OCR and AI. Then ask questions across your uploaded documents.</p>
     <h2>How to use</h2>
     <ol>
-      <li>Upload one or more documents at once, or a ZIP of documents.</li>
+      <li>Upload one or more documents.</li>
       <li>Wait while OCR and AI process each file.</li>
       <li>Ask questions across your whole document collection in chat.</li>
     </ol>
     <h2>Supported files</h2>
-    <div class="file-types">PNG · JPG · WEBP · BMP · TIFF · PDF · ZIP bundles</div>
+    <div class="file-types">PNG · JPG · WEBP · BMP · TIFF · PDF</div>
   </aside>
 
   <main class="main">
@@ -117,8 +121,8 @@
           <div class="card-heading"><span class="section-number">01</span><h3 id="upload-title">Upload documents</h3></div>
           <form id="upload-form">
             <div class="upload-zone">
-              <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.pdf,.zip,image/png,image/jpeg,image/webp,image/bmp,image/tiff,application/pdf,application/zip">
-              <p class="subtle">You can upload multiple files, or a single .zip file containing many documents. Max 20MB per file.</p>
+              <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.pdf,image/png,image/jpeg,image/webp,image/bmp,image/tiff,application/pdf">
+              <p class="subtle">You can select multiple files at once. Max 20MB per file.</p>
             </div>
             <div class="actions"><button id="upload-button" class="button primary" type="submit">Upload and process</button></div>
             <p class="subtle">Processing takes 15–30 seconds per file. Large batches will take a while — please keep this tab open.</p>
@@ -132,8 +136,13 @@
       <section class="card" aria-labelledby="chat-title">
         <div class="card-heading"><span class="section-number">02</span><h3 id="chat-title">Ask your documents</h3></div>
         <p class="subtle">Ask a question about details across the documents you’ve uploaded.</p>
+        <fieldset class="chat-scope">
+          <legend>Ask about:</legend>
+          <label><input id="chat-scope-all" type="radio" name="chat-scope" value="all" checked> All documents</label>
+          <label><input id="last-upload-scope" type="radio" name="chat-scope" value="last-upload" disabled> Just the last upload</label>
+        </fieldset>
         <form id="chat-form" class="chat-form">
-          <input id="chat-question" type="text" placeholder="e.g. What was the total on my last receipt?" required>
+          <input id="chat-question" type="text" placeholder="List all items with quantity and price." required>
           <button id="ask-button" class="button primary" type="submit">Ask</button>
         </form>
         <p id="chat-status" class="status" role="status"></p>
@@ -144,6 +153,28 @@
 
   <script>
     const byId = (id) => document.getElementById(id);
+    let lastUploadDocumentIds = [];
+    const FRIENDLY_ERRORS = {
+      aiBusy: "The AI service is busy right now. Please try again in a minute.",
+      aiQuota: "The AI service is at its free-tier limit. Please wait about a minute and try again.",
+      database: "We couldn't reach the database. Please try again in a moment.",
+      file: "This file couldn't be read. Please check it and try another file.",
+      tooLarge: "This file is larger than 20MB.",
+      generic: "Something went wrong. Please try again.",
+      network: "Can't reach the server. Please check your connection and try again.",
+    };
+
+    function friendlyMessage(message) {
+      if (Object.values(FRIENDLY_ERRORS).includes(message)) return message;
+      if (typeof message === "string" && /^The AI service is at its free-tier limit\. Please wait \d+ seconds? and try again\.$/.test(message)) {
+        return message;
+      }
+      return FRIENDLY_ERRORS.generic;
+    }
+
+    function friendlyError(message) {
+      return { friendlyMessage: friendlyMessage(message) };
+    }
 
     function element(tag, className, text) {
       const node = document.createElement(tag);
@@ -162,13 +193,20 @@
       return typeof amount === "number" ? amount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(amount);
     }
 
-    function renderFields(container, fields, heading = "Extracted details") {
+    function renderFields(container, fields, heading = "Extracted details", documentNeedsReview = false) {
       container.replaceChildren();
       const card = element("div", "result-card");
-      card.append(element("h4", "", heading));
+      const title = element("h4", "", heading);
+      if (documentNeedsReview) {
+        const reviewBadge = element("span", "review-badge", "⚠ check");
+        reviewBadge.setAttribute("title", "The sum of line net amounts differs from the invoice total by more than 2%.");
+        title.append(reviewBadge);
+      }
+      card.append(title);
       const grid = element("div", "field-grid");
       const values = [
         ["Vendor", fields?.vendor_name],
+        ["Seller GSTIN", fields?.seller_gstin],
         ["Document type", fields?.document_type],
         ["Total amount", fields?.total_amount === null || fields?.total_amount === undefined ? null : formatAmount(fields.total_amount)],
         ["Date", fields?.date],
@@ -187,7 +225,7 @@
         const table = element("table", "line-items");
         const thead = element("thead");
         const headerRow = element("tr");
-        for (const title of ["Item", "Qty", "Unit price", "Total"]) headerRow.append(element("th", "", title));
+        for (const title of ["Item", "Qty", "Unit price", "Taxable", "Net amount"]) headerRow.append(element("th", "", title));
         thead.append(headerRow);
         table.append(thead);
         const tbody = element("tbody");
@@ -196,7 +234,16 @@
           row.append(element("td", "", line.description || "—"));
           row.append(element("td", "", line.quantity ?? "—"));
           row.append(element("td", "", line.unit_price == null ? "—" : formatAmount(line.unit_price)));
-          row.append(element("td", "", line.total == null ? "—" : formatAmount(line.total)));
+          row.append(element("td", "", line.taxable_amount == null ? "—" : formatAmount(line.taxable_amount)));
+          const netAmount = line.net_amount ?? line.total;
+          const netCell = element("td");
+          netCell.append(document.createTextNode(netAmount == null ? "—" : formatAmount(netAmount)));
+          if (line.needs_review) {
+            const reviewBadge = element("span", "review-badge", "⚠ check");
+            reviewBadge.setAttribute("title", "Line-item arithmetic did not validate after re-extraction.");
+            netCell.append(reviewBadge);
+          }
+          row.append(netCell);
           tbody.append(row);
         }
         table.append(tbody);
@@ -208,17 +255,22 @@
     }
 
     async function fetchJson(url, options = {}) {
-      const response = await fetch(url, options);
+      let response;
+      try {
+        response = await fetch(url, options);
+      } catch {
+        throw { friendlyMessage: FRIENDLY_ERRORS.network };
+      }
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
+      if (!response.ok) throw friendlyError(body.message);
       return body;
     }
 
     function renderUploadResult(container, item) {
-      if (item.error) {
+      if (item.message) {
         const itemCard = element("div", "result-card");
         itemCard.append(element("h4", "", item.file_name));
-        itemCard.append(element("p", `status ${item.status === "skipped" ? "" : "error"}`.trim(), item.error));
+        itemCard.append(element("p", `status ${item.status === "skipped" ? "" : "error"}`.trim(), friendlyMessage(item.message)));
         container.append(itemCard);
         return;
       }
@@ -226,7 +278,12 @@
       const title = item.duplicate
         ? `${item.file_name} · already uploaded`
         : `${item.file_name} · ${item.status}`;
-      renderFields(itemCard, item.extraction?.fields || item.pages?.[0]?.fields || {}, title);
+      renderFields(
+        itemCard,
+        item.extraction?.fields || item.pages?.[0]?.fields || {},
+        title,
+        item.needs_review,
+      );
       container.append(itemCard);
     }
 
@@ -258,6 +315,7 @@
       let duplicates = 0;
       let skipped = 0;
       let failed = 0;
+      const batchDocumentIds = new Set();
       try {
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];
@@ -272,6 +330,9 @@
             const items = Array.isArray(response) ? response : [response];
             for (const item of items) {
               renderUploadResult(result, item);
+              if (item.id !== null && item.id !== undefined) {
+                batchDocumentIds.add(String(item.id));
+              }
               if (item.duplicate) duplicates += 1;
               else if (item.status === "completed") processed += 1;
               else if (item.status === "skipped") skipped += 1;
@@ -282,7 +343,7 @@
             renderUploadResult(result, {
               file_name: file.name,
               status: "failed",
-              error: error.message,
+              message: error?.friendlyMessage || FRIENDLY_ERRORS.generic,
             });
           }
         }
@@ -293,6 +354,12 @@
           hasIssues ? "" : "success",
         );
       } finally {
+        lastUploadDocumentIds = Array.from(batchDocumentIds);
+        const lastUploadScope = byId("last-upload-scope");
+        lastUploadScope.disabled = lastUploadDocumentIds.length === 0;
+        if (lastUploadScope.disabled) {
+          byId("chat-scope-all").checked = true;
+        }
         button.disabled = false;
         button.textContent = "Upload and process";
       }
@@ -310,7 +377,15 @@
       showStatus(status, "Searching your documents…");
       result.replaceChildren();
       try {
-        const answer = await fetchJson("/chat/query", {
+        const queryParams = new URLSearchParams();
+        const selectedScope = document.querySelector('input[name="chat-scope"]:checked').value;
+        if (selectedScope === "last-upload") {
+          for (const documentId of lastUploadDocumentIds) {
+            queryParams.append("document_ids", documentId);
+          }
+        }
+        const queryString = queryParams.toString();
+        const answer = await fetchJson(`/chat/query${queryString ? `?${queryString}` : ""}`, {
           method: "POST",
           headers: { "Content-Type": "text/plain" },
           body: question,
@@ -324,7 +399,7 @@
         }
         result.append(sourceArea);
       } catch (error) {
-        showStatus(status, error.message, "error");
+        showStatus(status, error?.friendlyMessage || FRIENDLY_ERRORS.generic, "error");
       } finally {
         button.disabled = false;
       }
