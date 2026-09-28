@@ -36,3 +36,7 @@ logs/
 *.sqlite3
 uploads/
 artifacts/
+
+.env
+uploads/
+fixtures/extracted_*.txt
