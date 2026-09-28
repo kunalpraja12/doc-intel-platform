@@ -54,7 +54,11 @@ class OCRExtractor:
 
     def __init__(self, tesseract_cmd: str | None = None, default_upscale: int | None = None) -> None:
         # Prefer explicit arg, otherwise read from TESSERACT_CMD env var
-        cmd = tesseract_cmd if tesseract_cmd is not None else os.getenv("TESSERACT_CMD")
+        cmd = tesseract_cmd
+        if cmd is None:
+            cmd = os.getenv("TESSERACT_CMD")
+        if not cmd and os.name != "nt":
+            cmd = "/usr/bin/tesseract"
         if cmd and pytesseract is not None:
             pytesseract.pytesseract.tesseract_cmd = cmd
         self.available = pytesseract is not None and cv2 is not None

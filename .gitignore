@@ -39,3 +39,5 @@ uploads/
 artifacts/
 
 fixtures/extracted_*.txt
+/pre.txt
+/raw.txt

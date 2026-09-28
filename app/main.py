@@ -30,7 +30,7 @@ from app.dependencies import get_db
 
 # Import routers
 from app.api.routes.health import router as health_router
-from app.api.routes.documents import router as documents_router
+from app.api.routes.documents import UPLOAD_DIR, router as documents_router
 from app.api.routes.chat import router as chat_router
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     # Verify DB connectivity on startup; fail loudly if it cannot connect.
     try:
         with engine.connect() as conn:
