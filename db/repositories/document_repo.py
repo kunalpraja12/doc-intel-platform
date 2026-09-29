@@ -418,3 +418,28 @@ class DocumentRepository:
             }
             for row in rows
         ]
+
+    def get_line_item_net_amount_sum(
+        self,
+        db: Session,
+        document_id: int,
+    ) -> float | None:
+        """Sum captured net amounts for one document, without mixing documents."""
+        rows = (
+            db.query(LineItem.total, LineItem.raw)
+            .filter(LineItem.document_id == document_id)
+            .order_by(LineItem.id)
+            .all()
+        )
+        amounts = []
+        for total, raw in rows:
+            raw = raw if isinstance(raw, dict) else {}
+            value = raw.get("net_amount")
+            if value is None:
+                value = raw.get("total")
+            if value is None:
+                value = total
+            parsed = _optional_float(value)
+            if parsed is not None:
+                amounts.append(parsed)
+        return sum(amounts) if amounts else None

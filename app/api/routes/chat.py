@@ -6,6 +6,7 @@ import os
 import logging
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -197,6 +198,36 @@ def _document_ids_mentioned_in_question(
     return None
 
 
+def _explicit_document_ids_mentioned_in_question(
+    question: str,
+    documents: list[dict[str, Any]],
+) -> list[int]:
+    normalized_question = "".join(
+        re.findall(r"[a-z0-9]+", question.casefold())
+    )
+    matches = []
+    for document in documents:
+        identifiers = [
+            document.get("invoice_number"),
+            Path(str(document.get("file_name") or "")).stem,
+        ]
+        for identifier in identifiers:
+            normalized_identifier = "".join(
+                re.findall(r"[a-z0-9]+", str(identifier or "").casefold())
+            )
+            if len(normalized_identifier) >= 5 and normalized_identifier in normalized_question:
+                matches.append(int(document["document_id"]))
+                break
+    return matches
+
+
+def _is_document_total_question(question: str) -> bool:
+    normalized = question.casefold()
+    return any(
+        phrase in normalized
+        for phrase in ("total", "how much", "amount due", "grand total")
+    )
+
 
 
 
@@ -216,7 +247,14 @@ def query_chat(
         if _needs_structured_data(question):
             overview = repo.get_structured_chat_overview(db, document_ids)
             documents = overview["documents"]
-            mentioned_ids = _document_ids_mentioned_in_question(question, documents)
+            explicit_ids = _explicit_document_ids_mentioned_in_question(
+                question,
+                documents,
+            )
+            mentioned_ids = (
+                explicit_ids
+                or _document_ids_mentioned_in_question(question, documents)
+            )
             if mentioned_ids is not None:
                 overview = repo.get_structured_chat_overview(db, mentioned_ids)
                 documents = overview["documents"]
@@ -225,6 +263,83 @@ def query_chat(
                     answer="I couldn't find matching documents with structured data.",
                     sources=[],
                 )
+
+            if explicit_ids and _is_document_total_question(question):
+                null_total_documents = [
+                    document
+                    for document in documents
+                    if document["total_amount"] is None
+                ]
+                if null_total_documents:
+                    document_sums = [
+                        (
+                            document,
+                            repo.get_line_item_net_amount_sum(
+                                db,
+                                int(document["document_id"]),
+                            ),
+                        )
+                        for document in null_total_documents
+                    ]
+                    available_sums = {
+                        round(line_item_sum, 2)
+                        for _, line_item_sum in document_sums
+                        if line_item_sum is not None
+                    }
+                    source_document, line_item_sum = max(
+                        document_sums,
+                        key=lambda entry: int(entry[0]["document_id"]),
+                    )
+                    if len(available_sums) > 1:
+                        return ChatQueryResponse(
+                            answer=(
+                                "I found multiple matching documents with different "
+                                "captured line-item totals, so I can't safely choose "
+                                "one. Please specify the vendor or file name."
+                            ),
+                            sources=[
+                                ChatSource(
+                                    document_id=str(document["document_id"]),
+                                    file_name=document["file_name"],
+                                )
+                                for document in null_total_documents
+                            ],
+                        )
+
+                    source = ChatSource(
+                        document_id=str(source_document["document_id"]),
+                        file_name=source_document["file_name"],
+                    )
+                    if line_item_sum is None:
+                        answer = (
+                            "The printed total wasn't identified for this document, "
+                            "and the captured line-item amounts aren't available. "
+                            "This may not include additional pages, taxes, or charges "
+                            "not captured."
+                        )
+                    else:
+                        answer = (
+                            "The printed total wasn't identified for this document. "
+                            f"The line items shown total ₹{line_item_sum:,.2f} — "
+                            "this may not include additional pages, taxes, or charges "
+                            "not captured."
+                        )
+                    return ChatQueryResponse(answer=answer, sources=[source])
+
+                if len(documents) > 1:
+                    return ChatQueryResponse(
+                        answer=(
+                            "I found multiple matching documents, so I can't safely "
+                            "identify the total. Please specify the vendor or file name."
+                        ),
+                        sources=[
+                            ChatSource(
+                                document_id=str(document["document_id"]),
+                                file_name=document["file_name"],
+                            )
+                            for document in documents
+                        ],
+                    )
 
             list_items = _is_list_items_question(question)
             if list_items:
