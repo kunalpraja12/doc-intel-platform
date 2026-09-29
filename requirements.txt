@@ -1,25 +1,16 @@
-# Runtime
-fastapi>=0.111.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.7.0
-python-multipart>=0.0.9
-sqlalchemy>=2.0.0
 alembic>=1.13.0
-psycopg[binary]>=3.1.0
-pgvector>=0.3.6
-
-# OCR / image and PDF processing
-opencv-python-headless>=4.10.0
-pytesseract>=0.3.10
-PyMuPDF>=1.24.0
-Pillow>=10.0.0
-numpy>=1.26.0
-
-# Gemini / LangChain
+fastapi>=0.111.0
 langchain>=0.3.0
 langchain-google-genai>=2.0.0
-
-# Local Compose worker dependencies
-redis>=5.0.0
-celery>=5.3.0
+numpy>=1.26.0
+opencv-python-headless>=4.10.0
+pgvector>=0.3.6
+Pillow>=10.0.0
+psycopg[binary]>=3.1.0
+pydantic>=2.7.0
+pymupdf>=1.24.0
+pytesseract>=0.3.10
 python-dotenv>=1.0.0
+python-multipart>=0.0.9
+sqlalchemy>=2.0.0
+uvicorn[standard]>=0.30.0

@@ -9,7 +9,7 @@ Doc Intel Platform is a production-style AI/ML portfolio project for processing 
 - Classify and enrich document data with ML/LLM workflows
 - Store trusted metadata and extracted records in PostgreSQL
 - Support natural-language Q&A over a document corpus using RAG
-- Run heavy processing asynchronously in a background worker system
+- Process uploaded documents synchronously through OCR and extraction
 - Provide a demo-friendly API and UI for upload, review, and chat
 
 ## Architecture Summary
@@ -55,15 +55,6 @@ This repository is intentionally scaffolded as a clean Python service-oriented p
 │   │   ├── logging.py
 │   │   ├── security.py
 │   │   └── constants.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── document_service.py
-│   │   ├── chat_service.py
-│   │   └── ingestion_service.py
-│   └── workers/
-│       ├── __init__.py
-│       ├── celery_app.py
-│       └── tasks.py
 ├── db/
 │   ├── __init__.py
 │   ├── session.py
@@ -76,8 +67,7 @@ This repository is intentionally scaffolded as a clean Python service-oriented p
 │   │   └── audit.py
 │   ├── repositories/
 │   │   ├── __init__.py
-│   │   ├── document_repo.py
-│   │   └── chat_repo.py
+│   │   └── document_repo.py
 │   └── migrations/
 │       └── README.md
 ├── pipeline/
