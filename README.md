@@ -16,11 +16,16 @@ An AI-powered platform that extracts structured data from invoices and receipts 
 
 ## How it works
 
-```
-Upload → OCR (Tesseract + OpenCV) → LLM extraction (Gemini) → Validation → PostgreSQL + pgvector
-                                                                                      │
-                                                                                      ▼
-                                                              Chat → SQL lookup / vector search → Gemini → Answer
+```mermaid
+flowchart LR
+    A[Upload] --> B[OCR<br/>Tesseract + OpenCV]
+    B --> C[LLM Extraction<br/>Gemini]
+    C --> D[Validation]
+    D --> E[(PostgreSQL<br/>+ pgvector)]
+    F[Chat Query] --> G[SQL Lookup /<br/>Vector Search]
+    G --> H[Gemini]
+    H --> I[Answer]
+    E -.-> G
 ```
 
 - **OCR pipeline:** Tesseract + OpenCV, with automatic orientation correction (auto-detects and fixes sideways or upside-down phone photos before reading). Supports PNG, JPG, WEBP, BMP, TIFF, and multi-page PDFs (PDF text is read directly when available, with OCR as a fallback for scanned pages).
@@ -45,7 +50,7 @@ Upload → OCR (Tesseract + OpenCV) → LLM extraction (Gemini) → Validation �
 ```
 .
 ├── app/
-│   └── api/routes/        # FastAPI routes: documents, chat, health
+│   ├── api/routes/         # FastAPI routes: documents, chat, health
 │   └── static/             # Frontend (single-page HTML/CSS/JS)
 ├── db/
 │   ├── models/              # SQLAlchemy models
