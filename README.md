@@ -1,149 +1,105 @@
-# Doc Intel Platform
+# Document Intelligence Platform
 
-Doc Intel Platform is a production-style AI/ML portfolio project for processing real-world documents such as invoices, receipts, insurance claims, ID cards, and forms. The platform is designed to demonstrate end-to-end engineering skills for document understanding, data validation, orchestration, and retrieval-augmented chat over business documents.
+An AI-powered platform that extracts structured data from invoices and receipts using OCR and LLMs, and lets you ask natural-language questions across your uploaded documents using Retrieval-Augmented Generation (RAG).
 
-## Goals
+**Live demo:** https://doc-intel-platform.onrender.com
+*(Free-tier hosting — the app sleeps after ~15 minutes of inactivity, so the first load may take 30–60 seconds to wake up.)*
 
-- Ingest unstructured and semi-structured documents from multiple sources
-- Extract text and structure using OCR + CV preprocessing + layout detection
-- Classify and enrich document data with ML/LLM workflows
-- Store trusted metadata and extracted records in PostgreSQL
-- Support natural-language Q&A over a document corpus using RAG
-- Process uploaded documents synchronously through OCR and extraction
-- Provide a demo-friendly API and UI for upload, review, and chat
+---
 
-## Architecture Summary
+## What it does
 
-This repository is intentionally scaffolded as a clean Python service-oriented project so each subsystem can be built incrementally:
+1. **Upload** an invoice or receipt (image or PDF) — including real-world phone photos with handwriting, stamps, and awkward angles.
+2. The platform **extracts** vendor details, GST/tax numbers, line items, quantities, and totals using OCR + an LLM.
+3. The extraction is **self-validated**: line-item math (quantity × rate vs. taxable amount) is checked automatically, and mismatched lines are re-extracted or flagged for review.
+4. **Ask questions** in plain English across one document or your whole document history — e.g. "What's the total of invoice 51109301?" or "List everything I bought from TechVision."
 
-- `app/` contains the FastAPI application, route layer, and service entrypoints
-- `db/` contains database models, session management, and repository patterns
-- `pipeline/` contains OCR/CV, validation, orchestration, and RAG logic
-- `models/` contains ML model wrappers and prompt assets
-- `tests/` contains unit and integration tests
-- `docker/` and root config files provide local orchestration for dev and demo usage
+## How it works
 
-## Proposed Folder Structure
-
-```text
-.
-├── README.md
-├── .gitignore
-├── .env.example
-├── requirements.txt
-├── pyproject.toml
-├── Dockerfile
-├── docker-compose.yml
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── dependencies.py
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── routes/
-│   │   │   ├── __init__.py
-│   │   │   ├── documents.py
-│   │   │   ├── chat.py
-│   │   │   └── health.py
-│   │   └── schemas/
-│   │       ├── __init__.py
-│   │       ├── document.py
-│   │       └── chat.py
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── config.py
-│   │   ├── logging.py
-│   │   ├── security.py
-│   │   └── constants.py
-├── db/
-│   ├── __init__.py
-│   ├── session.py
-│   ├── alembic.ini
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── document.py
-│   │   ├── extraction.py
-│   │   ├── user.py
-│   │   └── audit.py
-│   ├── repositories/
-│   │   ├── __init__.py
-│   │   └── document_repo.py
-│   └── migrations/
-│       └── README.md
-├── pipeline/
-│   ├── __init__.py
-│   ├── extract/
-│   │   ├── __init__.py
-│   │   ├── ocr.py
-│   │   ├── cv_preprocessing.py
-│   │   └── layout.py
-│   ├── validate/
-│   │   ├── __init__.py
-│   │   ├── rules.py
-│   │   └── llm_enrichment.py
-│   ├── orchestrator/
-│   │   ├── __init__.py
-│   │   ├── graph.py
-│   │   └── states.py
-│   ├── rag/
-│   │   ├── __init__.py
-│   │   ├── embeddings.py
-│   │   ├── retriever.py
-│   │   └── vector_store.py
-│   └── utils/
-│       ├── __init__.py
-│       └── io.py
-├── models/
-│   ├── __init__.py
-│   ├── document_classifier.py
-│   ├── ner.py
-│   └── prompts/
-│       ├── __init__.py
-│       ├── extraction_prompt.txt
-│       └── qa_prompt.txt
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── unit/
-│   │   ├── __init__.py
-│   │   └── test_extraction.py
-│   ├── integration/
-│   │   ├── __init__.py
-│   │   └── test_pipeline.py
-│   └── fixtures/
-│       ├── sample_invoice.pdf
-│       └── sample_receipt.jpg
-├── scripts/
-│   ├── bootstrap.py
-│   └── seed_data.py
-├── docs/
-│   └── architecture.md
-└── .github/
-    └── workflows/
-        └── ci.yml
+```
+Upload → OCR (Tesseract + OpenCV) → LLM extraction (Gemini) → Validation → PostgreSQL + pgvector
+                                                                                      │
+                                                                                      ▼
+                                                              Chat → SQL lookup / vector search → Gemini → Answer
 ```
 
-## Why this structure?
+- **OCR pipeline:** Tesseract + OpenCV, with automatic orientation correction (auto-detects and fixes sideways or upside-down phone photos before reading). Supports PNG, JPG, WEBP, BMP, TIFF, and multi-page PDFs (PDF text is read directly when available, with OCR as a fallback for scanned pages).
+- **Extraction:** Google Gemini (via LangChain), given both the OCR text and the original image, extracts vendor name, seller/buyer GSTIN, document type, totals, dates, invoice numbers, and line items into a structured schema.
+- **Validation:** For each line item, the system checks that quantity × rate matches the printed taxable amount (within tolerance). Mismatches trigger a focused re-extraction; lines that still don't check out are flagged for manual review instead of silently trusting a bad read.
+- **Chat (RAG):** Questions about a specific document or invoice are answered directly from structured data in PostgreSQL. Open-ended questions ("what did I spend in total", broad searches) use vector similarity search over document embeddings (pgvector) with a diversity cap so one large document can't dominate the results. The system never fabricates a value — if a field wasn't extracted, it says so rather than guessing.
+- **Resilience:** Automatic retries with backoff for transient LLM failures (503/timeout), friendly handling of rate-limit errors (429), and user-facing error messages that never expose raw stack traces or internal details.
 
-This layout follows Python backend best practices for a production AI service:
+## Tech stack
 
-- `app/` separates HTTP and application concerns from domain logic
-- `core/` keeps configuration, security, and shared settings central
-- `workers/` isolates asynchronous job processing from request handling
-- `db/` cleanly separates persistence logic and model definitions
-- `pipeline/` groups document intelligence stages in a modular, testable way
-- `models/` keeps inference code and prompt templates separate from orchestration
-- `tests/` supports both fast unit tests and end-to-end integration validation
+| Layer | Technology |
+|---|---|
+| Backend | FastAPI, Python |
+| Database | PostgreSQL (Neon, serverless) + pgvector, SQLAlchemy, Alembic |
+| OCR | Tesseract, OpenCV, PyMuPDF (PDF rendering) |
+| LLM / RAG | Google Gemini, LangChain |
+| Frontend | HTML / CSS / vanilla JS |
+| Deployment | Docker, Render |
 
-## Next steps
+## Project structure
 
-This scaffold is intentionally sparse and placeholder-based. The next milestones are:
+```
+.
+├── app/
+│   └── api/routes/        # FastAPI routes: documents, chat, health
+│   └── static/             # Frontend (single-page HTML/CSS/JS)
+├── db/
+│   ├── models/              # SQLAlchemy models
+│   ├── repositories/        # Query layer
+│   └── migrations/          # Alembic migrations
+├── pipeline/
+│   └── extract/             # OCR, image preprocessing, field extraction, embeddings
+├── scripts/                 # Backfill / maintenance scripts
+├── tests/
+├── Dockerfile
+├── docker-compose.yml        # Local development only
+└── requirements.txt
+```
 
-1. Define the relational schema and migration strategy
-2. Implement the OCR + CV preprocessing pipeline
-3. Build the LangGraph document processing orchestrator
-4. Add the RAG chat layer and retrieval pipeline
-5. Expose the API and demo UI
-6. Add Docker, monitoring, and robust tests
+## Running locally
 
-This repository is ready for incremental implementation, feature by feature.
+```bash
+# 1. Clone and enter the project
+git clone https://github.com/kunalpraja12/doc-intel-platform.git
+cd doc-intel-platform
+
+# 2. Create a virtual environment and install dependencies
+python -m venv venv
+venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+
+# 3. Copy the environment template and fill in your own values
+cp .env.example .env
+# Set DATABASE_URL (a Postgres connection string, e.g. from Neon),
+# GEMINI_API_KEY (from aistudio.google.com),
+# and TESSERACT_CMD (path to your local Tesseract install)
+
+# 4. Run database migrations
+alembic -c db/alembic.ini upgrade head
+
+# 5. Start the server
+uvicorn app.main:app --reload --port 8000
+```
+
+Then open `http://127.0.0.1:8000`.
+
+Tesseract OCR must be installed separately on your machine (not just the Python wrapper) — see [tesseract-ocr/tesseract](https://github.com/tesseract-ocr/tesseract) for install instructions per OS.
+
+## Known limitations
+
+- **Thermal receipts with dense price columns** sometimes fail OCR on the numeric columns — the system correctly returns `null` for unreadable fields rather than guessing.
+- **Diagonal/stylized stamp graphics** (e.g. "PAID" ribbon stamps) are not reliably read by OCR; this was tested and intentionally not pursued further, as it added processing time without improving accuracy.
+- **Multi-page documents**: if a document continues onto a page that wasn't uploaded (e.g. the bill total prints on page 2), the total will correctly show as not identified rather than a guessed value.
+- **Free-tier hosting**: the live demo sleeps after inactivity (first load can take up to a minute), and broad questions across a large document history can hit the Gemini free-tier rate limit — the system handles this gracefully with a friendly message and automatic retry rather than failing silently.
+- **Raw uploaded files are not persisted across deploys** on the free tier (no attached object storage); extracted data (OCR text, structured fields, embeddings) is safely stored in PostgreSQL regardless.
+
+## What this project demonstrates
+
+- End-to-end AI pipeline design: OCR → LLM extraction → validation → storage → retrieval
+- Multimodal LLM usage (image + text) for extracting data from messy real-world documents
+- RAG system design, including hybrid retrieval (structured SQL vs. vector search) and hallucination prevention
+- Production concerns often skipped in portfolio projects: API rate-limit handling, retry logic, duplicate detection, error handling that doesn't leak internals, and containerized cloud deployment
