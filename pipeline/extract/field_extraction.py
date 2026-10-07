@@ -27,6 +27,13 @@ class ExtractedLineItem(BaseModel):
     units_per_case: float | None = Field(default=None, description="UPC value, when present.")
     base_rate: float | None = Field(default=None, description="Base rate used to calculate the taxable amount.")
     unit_price: float | None = Field(default=None)
+    gst_percent: float | None = Field(
+        default=None,
+        description=(
+            "Per-line GST/tax percentage shown in a GST, GST @, Tax, or Tax @ "
+            "column. Return the numeric percentage, e.g. 5 for 5%; null if blank."
+        ),
+    )
     discount: float | None = Field(default=None)
     taxable_amount: float | None = Field(default=None)
     net_amount: float | None = Field(default=None)
@@ -38,6 +45,14 @@ class ExtractedDocumentFields(BaseModel):
     """Structured fields extracted from a receipt, invoice, or other document."""
 
     vendor_name: str | None = Field(default=None)
+    taxable_amount_column_present: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the source page has a separate taxable amount/value column "
+            "for line items. Do not count a per-unit rate excluding GST as a "
+            "separate taxable amount column."
+        ),
+    )
     document_type: str | None = Field(
         default=None,
         description="Best guess: invoice, receipt, or other.",
@@ -88,10 +103,20 @@ the top) for `seller_gstin`. Use the GSTIN in the buyer or bill-to section for
 For every line item, `net_amount` and legacy `total` mean the Net Amount
 column (the final amount for that line), and `unit_price` is the per-unit
 selling rate. Extract `base_rate`, `discount`, and `taxable_amount` separately
-when those columns are present. If the invoice has both `Cs` (cases) and `Pcs`
+when those columns are present. Set `taxable_amount_column_present` to true
+only when the page prints a separate taxable amount/value column for line
+items. A per-unit "Rate (Excl. GST)" column is not a separate taxable amount
+column. Set it to false when the invoice has no separate taxable amount/value
+column, and null only when the image is too unclear to determine. If the invoice
+has both `Cs` (cases) and `Pcs`
 columns, also extract `cases`, `pieces`, and `units_per_case` (UPC); quantity
 must be (cases × UPC) + pieces. When Pcs is 0 and Cs is nonzero, use the
 case-based quantity. Never copy or infer a quantity from a neighboring row.
+Extract the percentage shown for each line in a `GST`, `GST @`, `Tax`, or
+`Tax @` column into `gst_percent` as a numeric percentage (for example, 5 for
+`5%`). Treat those header labels as equivalent. Return null when a row's
+percentage is blank or unreadable; do not calculate a percentage from amounts
+or copy it from another row.
 Read quantities carefully from the image and ignore pen marks or scribbles.
 Ignore rows that are crossed out or struck through. If a value is truly
 unreadable, return null; do not guess. Return null for other fields that cannot
@@ -186,7 +211,9 @@ from a neighboring row. For Cs and Pcs columns, calculate quantity as
 (cases × units_per_case) + pieces when all three values are visible. Return
 null for unreadable values. Preserve the line description if it matches this
 row, and return the row's base_rate, unit_price, discount, taxable_amount,
-net_amount, and legacy total where visible.
+gst_percent (from GST/GST @/Tax/Tax @ columns), net_amount, and legacy total
+where visible. Return null if the row's tax percentage is blank or unreadable;
+do not infer or copy a neighboring row's percentage.
 
 OCR hint for the page:
 ---

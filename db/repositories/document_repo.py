@@ -110,6 +110,7 @@ class DocumentRepository:
                 description=item.get("description"),
                 quantity=item.get("quantity"),
                 unit_price=item.get("unit_price"),
+                gst_percent=item.get("gst_percent"),
                 total=item.get("total"),
                 raw=item,
             )
@@ -197,6 +198,7 @@ class DocumentRepository:
                 description=item.get("description"),
                 quantity=item.get("quantity"),
                 unit_price=item.get("unit_price"),
+                gst_percent=item.get("gst_percent"),
                 total=item.get("total"),
                 raw=item,
             )

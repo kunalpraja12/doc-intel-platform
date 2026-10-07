@@ -19,6 +19,7 @@ class LineItem(Base):
     description = Column(Text, nullable=True)
     quantity = Column(Float, nullable=True)
     unit_price = Column(Float, nullable=True)
+    gst_percent = Column(Float, nullable=True)
     total = Column(Float, nullable=True)
     raw = Column(JSON, nullable=True)  # raw OCR row or tokens
 

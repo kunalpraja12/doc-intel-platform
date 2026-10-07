@@ -38,6 +38,7 @@ class StructuredLineItemResponse(BaseModel):
     units_per_case: Optional[float] = None
     base_rate: Optional[float] = None
     unit_price: Optional[float] = None
+    gst_percent: Optional[float] = None
     discount: Optional[float] = None
     taxable_amount: Optional[float] = None
     net_amount: Optional[float] = None
@@ -47,6 +48,7 @@ class StructuredLineItemResponse(BaseModel):
 
 class StructuredFieldsResponse(BaseModel):
     vendor_name: Optional[str] = None
+    taxable_amount_column_present: Optional[bool] = None
     seller_gstin: Optional[str] = None
     buyer_gstin: Optional[str] = None
     document_type: Optional[str] = None
