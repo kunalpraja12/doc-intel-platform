@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,6 +16,8 @@ from pydantic import BaseModel, Field
 from app.core.errors import invoke_gemini_with_retries
 
 load_dotenv()
+
+_STANDARD_GST_RATES = {0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40}
 
 
 class ExtractedLineItem(BaseModel):
@@ -188,6 +191,159 @@ def _taxable_matches(line: ExtractedLineItem) -> bool | None:
     expected_taxable = quantity * base_rate - (line.discount or 0)
     tolerance = max(abs(line.taxable_amount) * 0.02, 0.01)
     return abs(expected_taxable - line.taxable_amount) <= tolerance
+
+
+def _ocr_row_percentages(
+    row: list[dict],
+    base_rate: float | None,
+) -> set[float]:
+    row_text = " ".join(
+        str(word.get("text") or "")
+        for word in sorted(row, key=lambda item: int(item.get("left", 0)))
+    )
+    percentages: set[float] = set()
+    base_rate_digits = (
+        re.sub(r"\D", "", f"{base_rate:.2f}")
+        if base_rate is not None
+        else ""
+    )
+    for match in re.finditer("%", row_text):
+        prefix = row_text[:match.start()]
+        prefix_digits = re.sub(r"\D", "", prefix)
+        rate_position = (
+            prefix_digits.rfind(base_rate_digits)
+            if base_rate_digits
+            else -1
+        )
+        if rate_position >= 0:
+            suffix = prefix_digits[rate_position + len(base_rate_digits):]
+            if 1 <= len(suffix) <= 2:
+                value = float(suffix)
+                if (
+                    len(suffix) == 2
+                    and suffix.startswith("1")
+                    and value not in _STANDARD_GST_RATES
+                    and float(suffix[-1]) in _STANDARD_GST_RATES
+                ):
+                    value = float(suffix[-1])
+                if value <= 100:
+                    percentages.add(value)
+                    continue
+        number_match = re.search(
+            r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*$",
+            prefix,
+        )
+        if number_match is None:
+            continue
+        value = float(number_match.group(1))
+        if 0 <= value <= 100:
+            percentages.add(value)
+    return percentages
+
+
+def supplement_line_items_from_ocr(
+    fields: ExtractedDocumentFields,
+    ocr_words: list[dict],
+) -> ExtractedDocumentFields:
+    """Recover visible row-level tax rates missed by structured LLM output."""
+    rows: list[list[dict]] = []
+    for word in sorted(
+        ocr_words,
+        key=lambda item: (
+            float(item.get("top", 0)) + float(item.get("height", 0)) / 2,
+            int(item.get("left", 0)),
+        ),
+    ):
+        text = str(word.get("text") or "").strip()
+        if not text:
+            continue
+        center_y = float(word.get("top", 0)) + float(word.get("height", 0)) / 2
+        if not rows:
+            rows.append([word])
+            continue
+        previous = rows[-1]
+        previous_center_y = sum(
+            float(item.get("top", 0)) + float(item.get("height", 0)) / 2
+            for item in previous
+        ) / len(previous)
+        if abs(center_y - previous_center_y) <= 28:
+            previous.append(word)
+        else:
+            rows.append([word])
+
+    used_rows: set[int] = set()
+    previous_row_y = -1.0
+    enriched_lines: list[ExtractedLineItem] = []
+    ignored_terms = {
+        "bag", "gm", "kg", "loose", "normal", "packet", "pouch", "tin",
+    }
+    for line in fields.line_items:
+        terms = {
+            token
+            for token in re.findall(r"[a-z]+", (line.description or "").casefold())
+            if len(token) > 2 and token not in ignored_terms
+        }
+        best_row_index: int | None = None
+        best_score = 0
+        best_row_y = previous_row_y
+        for row_index, row in enumerate(rows):
+            if row_index in used_rows:
+                continue
+            row_y = min(
+                float(word.get("top", 0)) + float(word.get("height", 0)) / 2
+                for word in row
+            )
+            if row_y <= previous_row_y:
+                continue
+            row_terms = {
+                token
+                for word in row
+                for token in re.findall(
+                    r"[a-z]+",
+                    str(word.get("text") or "").casefold(),
+                )
+            }
+            score = len(terms & row_terms)
+            if score > best_score:
+                best_row_index = row_index
+                best_score = score
+                best_row_y = row_y
+
+        gst_percent = line.gst_percent
+        if best_row_index is not None:
+            used_rows.add(best_row_index)
+            previous_row_y = best_row_y
+            percentages = _ocr_row_percentages(
+                rows[best_row_index],
+                line.base_rate,
+            )
+            if gst_percent is None and len(percentages) == 1:
+                gst_percent = percentages.pop()
+
+        quantity = _line_quantity(line)
+        taxable_amount = line.taxable_amount
+        if (
+            taxable_amount is None
+            and gst_percent is not None
+            and fields.taxable_amount_column_present is not True
+            and quantity is not None
+            and line.base_rate is not None
+        ):
+            taxable_amount = round(
+                quantity * line.base_rate - (line.discount or 0),
+                2,
+            )
+
+        enriched_lines.append(
+            line.model_copy(
+                update={
+                    "gst_percent": gst_percent,
+                    "taxable_amount": taxable_amount,
+                }
+            )
+        )
+
+    return fields.model_copy(update={"line_items": enriched_lines})
 
 
 def _reextract_line_item(

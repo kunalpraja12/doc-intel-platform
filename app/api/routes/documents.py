@@ -21,7 +21,6 @@ from app.api.schemas.document import (
     DocumentDetailResponse,
     ExtractionResultResponse,
     StructuredFieldsResponse,
-    StructuredLineItemResponse,
     PageExtractionResponse,
     UploadFileResult,
 )
@@ -40,7 +39,12 @@ from db.session import SessionLocal
 
 # Import OCR extractor
 from pipeline.extract.ocr import OCRExtractor
-from pipeline.extract.field_extraction import extract_fields, validate_line_items
+from pipeline.extract.field_extraction import (
+    ExtractedDocumentFields,
+    extract_fields,
+    supplement_line_items_from_ocr,
+    validate_line_items,
+)
 from pipeline.extract.embeddings import embed_text, page_chunk_text
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -285,6 +289,15 @@ def _process_document_upload(
                 page["text"],
                 image_path=image_paths[index],
             )
+            page_ocr_words = [
+                word
+                for word in extracted["words"]
+                if word.get("page", page["page_number"]) == page["page_number"]
+            ]
+            page_fields = supplement_line_items_from_ocr(
+                page_fields,
+                page_ocr_words,
+            )
             page["fields"] = validate_line_items(
                 page_fields,
                 page["text"],
@@ -406,6 +419,7 @@ def _document_detail_response(
             extracted_data,
             latest.model_name,
             latest.confidence_score,
+            extracted_data.get("words", []),
         )
     return DocumentDetailResponse(
         id=str(doc.id),
@@ -417,7 +431,10 @@ def _document_detail_response(
         content_type=doc.content_type,
         file_size=doc.file_size,
         page_count=extracted_data.get("page_count", 1) if extracted_data else 1,
-        pages=_pages_response(extracted_data.get("pages", []) if extracted_data else []),
+        pages=_pages_response(
+            extracted_data.get("pages", []) if extracted_data else [],
+            extracted_data.get("words", []) if extracted_data else [],
+        ),
         extraction=extraction_response,
     )
 
@@ -426,18 +443,22 @@ def _extraction_response(
     data: dict,
     model_name: str | None,
     confidence_score: float | None = None,
+    ocr_words: list[dict] | None = None,
 ) -> ExtractionResultResponse:
     fields = data.get("fields")
     structured_fields = None
     if fields:
-        structured_fields = StructuredFieldsResponse(
-            **{
-                **fields,
-                "line_items": [
-                    StructuredLineItemResponse(**item)
-                    for item in fields.get("line_items", [])
-                ],
-            }
+        page_ocr_words = [
+            word
+            for word in (ocr_words or [])
+            if word.get("page", 1) == 1
+        ]
+        enriched_fields = supplement_line_items_from_ocr(
+            ExtractedDocumentFields.model_validate(fields),
+            page_ocr_words,
+        )
+        structured_fields = StructuredFieldsResponse.model_validate(
+            enriched_fields.model_dump()
         )
     return ExtractionResultResponse(
         text=data.get("text", ""),
@@ -448,20 +469,29 @@ def _extraction_response(
     )
 
 
-def _pages_response(pages: list[dict]) -> list[PageExtractionResponse]:
+def _pages_response(
+    pages: list[dict],
+    ocr_words: list[dict] | None = None,
+) -> list[PageExtractionResponse]:
     return [
         PageExtractionResponse(
             page_number=page["page_number"],
             text=page.get("text", ""),
-            fields=StructuredFieldsResponse(
-                **{
-                    **page["fields"],
-                    "line_items": [
-                        StructuredLineItemResponse(**item)
-                        for item in page["fields"].get("line_items", [])
-                    ],
-                }
-            ) if page.get("fields") is not None else None,
+            fields=(
+                StructuredFieldsResponse.model_validate(
+                    supplement_line_items_from_ocr(
+                        ExtractedDocumentFields.model_validate(page["fields"]),
+                        [
+                            word
+                            for word in (ocr_words or [])
+                            if word.get("page", page["page_number"])
+                            == page["page_number"]
+                        ],
+                    ).model_dump()
+                )
+                if page.get("fields") is not None
+                else None
+            ),
         )
         for page in pages
     ]
