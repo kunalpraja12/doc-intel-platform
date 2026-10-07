@@ -7,6 +7,7 @@ Endpoints:
 """
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -152,7 +153,14 @@ async def upload_document(
                     )
                 )
                 continue
-            results.append(_process_document_upload(contents, filename, content_type))
+            results.append(
+                await run_in_threadpool(
+                    _process_document_upload,
+                    contents,
+                    filename,
+                    content_type,
+                )
+            )
         except Exception as exc:
             logger.exception("Failed to process upload %s", filename)
             results.append(
