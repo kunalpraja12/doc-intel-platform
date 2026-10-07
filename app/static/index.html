@@ -225,7 +225,7 @@
         const table = element("table", "line-items");
         const thead = element("thead");
         const headerRow = element("tr");
-        for (const title of ["Item", "Qty", "Unit price", "GST %", "Taxable", "Net amount"]) headerRow.append(element("th", "", title));
+        for (const title of ["Item", "Qty", "Unit price", "Tax", "Net amount"]) headerRow.append(element("th", "", title));
         thead.append(headerRow);
         table.append(thead);
         const tbody = element("tbody");
@@ -234,15 +234,16 @@
           row.append(element("td", "", line.description || "—"));
           row.append(element("td", "", line.quantity ?? "—"));
           row.append(element("td", "", line.unit_price == null ? "—" : formatAmount(line.unit_price)));
-          row.append(element("td", "", line.gst_percent == null ? "—" : `${formatAmount(line.gst_percent)}%`));
-          const taxableAmount = line.taxable_amount == null
-            ? fields?.taxable_amount_column_present === false
-              ? "N/A (not itemized)"
-              : fields?.taxable_amount_column_present === true
-                ? "Not extracted"
-                : "Not identified"
-            : formatAmount(line.taxable_amount);
-          row.append(element("td", "", taxableAmount));
+          const taxValue = line.taxable_amount != null
+            ? formatAmount(line.taxable_amount)
+            : line.gst_percent != null
+              ? `${formatAmount(line.gst_percent)}%`
+              : fields?.taxable_amount_column_present === false
+                ? "N/A (not itemized)"
+                : fields?.taxable_amount_column_present === true
+                  ? "Not extracted"
+                  : "Not identified";
+          row.append(element("td", "", taxValue));
           const netAmount = line.net_amount ?? line.total;
           const netCell = element("td");
           netCell.append(document.createTextNode(netAmount == null ? "—" : formatAmount(netAmount)));
