@@ -8,6 +8,7 @@ from db.repositories.document_repo import DocumentRepository
 from pipeline.extract.field_extraction import ExtractedLineItem
 from pipeline.extract.field_extraction import (
     ExtractedDocumentFields,
+    _ocr_row_percentages,
     supplement_line_items_from_ocr,
 )
 
@@ -148,3 +149,12 @@ def test_ocr_supplements_missing_gst_percent_and_derives_exclusive_taxable_value
     assert enriched.line_items[4].taxable_amount == 533.34
     assert enriched.line_items[5].gst_percent == 5
     assert enriched.line_items[5].taxable_amount == 542.85
+
+
+def test_ocr_ignores_percentages_outside_the_gst_column():
+    row = [
+        {"text": "95.24)5%", "left": 1000, "top": 100, "width": 120, "height": 30},
+        {"text": "28%", "left": 700, "top": 100, "width": 40, "height": 30},
+    ]
+
+    assert _ocr_row_percentages(row, base_rate=95.24, tax_column_x=1110) == {5}

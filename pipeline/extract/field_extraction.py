@@ -196,11 +196,16 @@ def _taxable_matches(line: ExtractedLineItem) -> bool | None:
 def _ocr_row_percentages(
     row: list[dict],
     base_rate: float | None,
+    tax_column_x: float | None,
 ) -> set[float]:
-    row_text = " ".join(
-        str(word.get("text") or "")
-        for word in sorted(row, key=lambda item: int(item.get("left", 0)))
-    )
+    ordered_words = sorted(row, key=lambda item: int(item.get("left", 0)))
+    word_ranges = []
+    offset = 0
+    for word in ordered_words:
+        text = str(word.get("text") or "")
+        word_ranges.append((offset, offset + len(text), word))
+        offset += len(text) + 1
+    row_text = " ".join(str(word.get("text") or "") for word in ordered_words)
     percentages: set[float] = set()
     base_rate_digits = (
         re.sub(r"\D", "", f"{base_rate:.2f}")
@@ -208,6 +213,30 @@ def _ocr_row_percentages(
         else ""
     )
     for match in re.finditer("%", row_text):
+        marker_word = next(
+            (
+                word
+                for start, end, word in word_ranges
+                if start <= match.start() < end
+            ),
+            None,
+        )
+        if marker_word is not None and tax_column_x is not None:
+            token_text = str(marker_word.get("text") or "")
+            token_start = next(
+                start
+                for start, _, word in word_ranges
+                if word is marker_word
+            )
+            char_index = match.start() - token_start
+            marker_x = float(marker_word.get("left", 0)) + (
+                float(marker_word.get("width", 0))
+                * (char_index + 0.5)
+                / max(len(token_text), 1)
+            )
+            if abs(marker_x - tax_column_x) > 180:
+                continue
+
         prefix = row_text[:match.start()]
         prefix_digits = re.sub(r"\D", "", prefix)
         rate_position = (
@@ -233,12 +262,36 @@ def _ocr_row_percentages(
             r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*$",
             prefix,
         )
-        if number_match is None:
-            continue
-        value = float(number_match.group(1))
-        if 0 <= value <= 100:
-            percentages.add(value)
+        if number_match is not None:
+            value = float(number_match.group(1))
+            if 0 <= value <= 100 and value in _STANDARD_GST_RATES:
+                percentages.add(value)
+
     return percentages
+
+
+def _tax_percent_column_x(ocr_words: list[dict]) -> float | None:
+    marker_positions: list[float] = []
+    for word in ocr_words:
+        text = str(word.get("text") or "")
+        for match in re.finditer("%", text):
+            marker_positions.append(
+                float(word.get("left", 0))
+                + float(word.get("width", 0))
+                * (match.start() + 0.5)
+                / max(len(text), 1)
+            )
+
+    if not marker_positions:
+        return None
+    best_cluster = max(
+        (
+            [position for position in marker_positions if abs(position - anchor) <= 180]
+            for anchor in marker_positions
+        ),
+        key=lambda cluster: (len(cluster), sum(cluster) / len(cluster)),
+    )
+    return sum(best_cluster) / len(best_cluster)
 
 
 def supplement_line_items_from_ocr(
@@ -274,6 +327,7 @@ def supplement_line_items_from_ocr(
     used_rows: set[int] = set()
     previous_row_y = -1.0
     enriched_lines: list[ExtractedLineItem] = []
+    tax_column_x = _tax_percent_column_x(ocr_words)
     ignored_terms = {
         "bag", "gm", "kg", "loose", "normal", "packet", "pouch", "tin",
     }
@@ -316,6 +370,7 @@ def supplement_line_items_from_ocr(
             percentages = _ocr_row_percentages(
                 rows[best_row_index],
                 line.base_rate,
+                tax_column_x,
             )
             if gst_percent is None and len(percentages) == 1:
                 gst_percent = percentages.pop()

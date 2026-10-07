@@ -236,13 +236,7 @@
           row.append(element("td", "", line.unit_price == null ? "—" : formatAmount(line.unit_price)));
           const taxValue = line.gst_percent != null
             ? `${formatAmount(line.gst_percent)}%`
-            : line.taxable_amount != null
-              ? formatAmount(line.taxable_amount)
-              : fields?.taxable_amount_column_present === false
-                ? "N/A (not itemized)"
-                : fields?.taxable_amount_column_present === true
-                  ? "Not extracted"
-                  : "Not identified";
+            : "Not identified";
           row.append(element("td", "", taxValue));
           const netAmount = line.net_amount ?? line.total;
           const netCell = element("td");
