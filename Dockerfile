@@ -10,10 +10,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \
+        tesseract-ocr-osd \
         libgl1 \
         libglib2.0-0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+RUN osd_data="$(find /usr/share/tesseract-ocr -path '*/tessdata/osd.traineddata' -print -quit)" \
+    && if [ -z "$osd_data" ]; then \
+        echo "ERROR: Tesseract OSD data (osd.traineddata) was not installed" >&2; \
+        exit 1; \
+    else \
+        echo "Tesseract OSD data found: $osd_data"; \
+    fi
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
