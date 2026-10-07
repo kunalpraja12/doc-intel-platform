@@ -234,10 +234,10 @@
           row.append(element("td", "", line.description || "—"));
           row.append(element("td", "", line.quantity ?? "—"));
           row.append(element("td", "", line.unit_price == null ? "—" : formatAmount(line.unit_price)));
-          const taxValue = line.taxable_amount != null
-            ? formatAmount(line.taxable_amount)
-            : line.gst_percent != null
-              ? `${formatAmount(line.gst_percent)}%`
+          const taxValue = line.gst_percent != null
+            ? `${formatAmount(line.gst_percent)}%`
+            : line.taxable_amount != null
+              ? formatAmount(line.taxable_amount)
               : fields?.taxable_amount_column_present === false
                 ? "N/A (not itemized)"
                 : fields?.taxable_amount_column_present === true
